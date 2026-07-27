@@ -3,6 +3,8 @@
 import React from 'react';
 import { Wallet, ArrowUpRight, History, CheckCircle, Clock } from 'lucide-react';
 
+import { CONTRACT_ADDRESSES } from '../config/contracts';
+
 interface AuditLog {
   id: string;
   recipeName: string;
@@ -34,6 +36,53 @@ const MOCK_AUDIT_LOGS: AuditLog[] = [
 export const PortfolioTracker: React.FC = () => {
   return (
     <div className="space-y-6">
+      {/* Deployed Smart Contracts Card Banner */}
+      <div className="glass-card p-5 border-l-4 border-l-blue-500 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-mono font-bold uppercase tracking-wider text-blue-400">
+            Arc Testnet Deployed Contracts (Chain ID 5042002)
+          </span>
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
+            Live on Arc
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+            <div className="text-slate-400 text-[10px]">SessionKeyRegistry</div>
+            <a
+              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sessionKeyRegistry}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline truncate block mt-0.5"
+            >
+              {CONTRACT_ADDRESSES.sessionKeyRegistry}
+            </a>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+            <div className="text-slate-400 text-[10px]">RecipeGuardrail</div>
+            <a
+              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.recipeGuardrail}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline truncate block mt-0.5"
+            >
+              {CONTRACT_ADDRESSES.recipeGuardrail}
+            </a>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+            <div className="text-slate-400 text-[10px]">SharedExecutorProxy</div>
+            <a
+              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sharedExecutorProxy}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline truncate block mt-0.5"
+            >
+              {CONTRACT_ADDRESSES.sharedExecutorProxy}
+            </a>
+          </div>
+        </div>
+      </div>
+
       {/* Portfolio Header Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="glass-card p-5">
