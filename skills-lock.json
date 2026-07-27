@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "use-arc": {
+      "source": "circlefin/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/circle/skills/use-arc/SKILL.md",
+      "computedHash": "faa502ae1026fe8e5a60403f97c2bd16dea6474021f4fc113bd5928f16bd8550"
+    },
+    "use-smart-contract-platform": {
+      "source": "circlefin/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/circle/skills/use-smart-contract-platform/SKILL.md",
+      "computedHash": "6d1a1a442d8de444a4eaec06ecdd375ebd7f531ca050fa1473e8514bd61a74da"
+    }
+  }
+}
