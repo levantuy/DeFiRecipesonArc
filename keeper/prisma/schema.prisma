@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecipeType {
+  AUTO_COMPOUNDER
+  RECURRING_DCA
+  SMART_YIELD_REBALANCER
+  SAFETY_NET
+  SAVINGS_STREAM
+}
+
+enum RecipeStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ExecutionStatus {
+  SIMULATING
+  SUBMITTED
+  CONFIRMED
+  SIMULATION_FAILED
+  REVERTED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  walletAddress String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  sessionKeys   SessionKey[]
+  recipes       ActiveRecipe[]
+}
+
+model SessionKey {
+  id               String   @id @default(uuid())
+  userAddress      String
+  sessionPublicKey String   @unique
+  validUntil       DateTime
+  maxUsdcSpend     Decimal? @db.Decimal(18, 6)
+  currentUsdcSpent Decimal  @default(0) @db.Decimal(18, 6)
+  isRevoked        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userAddress], references: [walletAddress], onDelete: Cascade)
+}
+
+model ActiveRecipe {
+  id             String         @id @default(uuid())
+  userAddress    String
+  recipeType     RecipeType
+  status         RecipeStatus   @default(ACTIVE)
+  targetProtocol String
+  parametersJson Json
+  lastExecutedAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  user           User           @relation(fields: [userAddress], references: [walletAddress], onDelete: Cascade)
+  executionLogs  ExecutionLog[]
+}
+
+model ExecutionLog {
+  id             String          @id @default(uuid())
+  activeRecipeId String
+  status         ExecutionStatus
+  txHash         String?
+  gasUsedUsdc    Decimal?        @db.Decimal(18, 6)
+  simulatedAt    DateTime        @default(now())
+  executedAt     DateTime?
+  errorMessage   String?
+  recipe         ActiveRecipe    @relation(fields: [activeRecipeId], references: [id], onDelete: Cascade)
+}

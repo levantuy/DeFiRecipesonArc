@@ -1,0 +1,28 @@
+{
+  "name": "defi-recipes-keeper",
+  "version": "1.0.0",
+  "description": "Off-Chain Automation Keeper Engine for DeFi Recipes on Arc",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "bullmq": "^5.7.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "viem": "^2.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "prisma": "^5.14.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}
