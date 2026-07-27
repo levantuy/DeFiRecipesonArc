@@ -5,6 +5,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES } from './config/contracts';
 import { recipeQueue, recipeWorker, executeRecipeStepDirectly } from './schedulers/queueScheduler';
+import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
 
 export const prisma = new PrismaClient();
 
@@ -48,9 +49,13 @@ export async function startKeeperEngine() {
     console.warn(`[Database Warning] Could not query database: ${err.message}`);
   }
 
+  // Start Cron Poll Scheduler
+  startCronScheduler(30_000);
+
   // Setup process exit handlers for graceful shutdown
   process.on('SIGINT', async () => {
     console.log('\n[Keeper Engine] Shutting down gracefully...');
+    stopCronScheduler();
     await recipeWorker.close();
     await recipeQueue.close();
     await prisma.$disconnect();
@@ -59,6 +64,7 @@ export async function startKeeperEngine() {
 
   process.on('SIGTERM', async () => {
     console.log('\n[Keeper Engine] Received SIGTERM. Shutting down...');
+    stopCronScheduler();
     await recipeWorker.close();
     await recipeQueue.close();
     await prisma.$disconnect();

@@ -97,59 +97,98 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
 
   console.log(`[Simulation Passed] Gas Estimate: ${simResult.estimatedGasUsdc} USDC native units`);
 
-  // Step 2: Relayer Transaction Submission with Viem
-  try {
-    const account = privateKeyToAccount(KEEPER_PRIVATE_KEY);
-    const walletClient = createWalletClient({
-      account,
-      chain: arcTestnet,
-      transport: http(ARC_TESTNET_CONFIG.rpcUrl),
-    });
+  // Step 2: Relayer Transaction Submission with Viem & Exponential Backoff Retry Policy
+  const MAX_RETRIES = 3;
+  let attempt = 0;
+  let hash: `0x${string}` | null = null;
+  let lastError: Error | null = null;
 
-    const hash = await walletClient.writeContract({
-      address: data.executorProxyAddress,
-      abi: SHARED_EXECUTOR_PROXY_ABI,
-      functionName: 'executeRecipeStep',
-      args: [data.userAddress, data.targetProtocolAddress, data.callData, BigInt(data.minAmountOut)],
-    });
+  const account = privateKeyToAccount(KEEPER_PRIVATE_KEY);
+  const walletClient = createWalletClient({
+    account,
+    chain: arcTestnet,
+    transport: http(ARC_TESTNET_CONFIG.rpcUrl),
+  });
 
-    console.log(`[Tx Submitted] Recipe ${data.recipeId} Tx Hash: ${hash}`);
-
-    if (executionLogId) {
-      await prisma.executionLog.update({
-        where: { id: executionLogId },
-        data: {
-          status: ExecutionStatus.SUBMITTED,
-          txHash: hash,
-          executedAt: new Date(),
-        },
-      }).catch(() => { });
+  while (attempt < MAX_RETRIES) {
+    attempt++;
+    try {
+      console.log(`[Tx Relayer] Attempt ${attempt}/${MAX_RETRIES} submitting transaction...`);
+      hash = await walletClient.writeContract({
+        address: data.executorProxyAddress,
+        abi: SHARED_EXECUTOR_PROXY_ABI,
+        functionName: 'executeRecipeStep',
+        args: [data.userAddress, data.targetProtocolAddress, data.callData, BigInt(data.minAmountOut)],
+      });
+      break; // Success, exit retry loop
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[Tx Relayer Warning] Attempt ${attempt} failed: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500);
+        console.log(`[Tx Relayer] Waiting ${backoffMs}ms before retrying...`);
+        await new Promise((res) => setTimeout(res, backoffMs));
+      }
     }
+  }
 
-    // Update ActiveRecipe lastExecutedAt
-    await prisma.activeRecipe.update({
-      where: { id: data.recipeId },
-      data: { lastExecutedAt: new Date() },
-    }).catch(() => { });
-
-    return {
-      status: 'SIMULATED_AND_EXECUTED',
-      txHash: hash,
-      gasUsedUsdc: simResult.estimatedGasUsdc?.toString(),
-    };
-  } catch (err: any) {
-    console.error(`[Tx Execution Failed] Recipe ${data.recipeId}: ${err.message}`);
+  if (!hash) {
+    console.error(`[Tx Execution Failed] Recipe ${data.recipeId} after ${MAX_RETRIES} attempts: ${lastError?.message}`);
     if (executionLogId) {
       await prisma.executionLog.update({
         where: { id: executionLogId },
         data: {
           status: ExecutionStatus.REVERTED,
-          errorMessage: err.message,
+          errorMessage: lastError?.message || 'Execution failed after retries',
         },
       }).catch(() => { });
     }
-    throw err;
+    throw lastError || new Error('Tx broadcast failed after max retries');
   }
+
+  console.log(`[Tx Submitted] Recipe ${data.recipeId} Tx Hash: ${hash}`);
+
+  if (executionLogId) {
+    await prisma.executionLog.update({
+      where: { id: executionLogId },
+      data: {
+        status: ExecutionStatus.SUBMITTED,
+        txHash: hash,
+        executedAt: new Date(),
+      },
+    }).catch(() => { });
+  }
+
+  // Step 3: Verify Sub-Second Finality on Arc Network
+  try {
+    const { publicClient } = await import('../simulation/staticSimulationEngine');
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 10_000 });
+    console.log(`[Tx Finalized] Recipe ${data.recipeId} confirmed in block ${receipt.blockNumber} (Status: ${receipt.status})`);
+
+    if (executionLogId && receipt.status === 'success') {
+      await prisma.executionLog.update({
+        where: { id: executionLogId },
+        data: {
+          status: ExecutionStatus.CONFIRMED,
+          gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
+        },
+      }).catch(() => { });
+    }
+  } catch (receiptErr: any) {
+    console.warn(`[Finality Warning] Could not wait for tx receipt for ${hash}: ${receiptErr.message}`);
+  }
+
+  // Update ActiveRecipe lastExecutedAt
+  await prisma.activeRecipe.update({
+    where: { id: data.recipeId },
+    data: { lastExecutedAt: new Date() },
+  }).catch(() => { });
+
+  return {
+    status: 'SIMULATED_AND_EXECUTED',
+    txHash: hash,
+    gasUsedUsdc: simResult.estimatedGasUsdc?.toString(),
+  };
 }
 
 /**
