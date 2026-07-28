@@ -64,7 +64,8 @@ graph TD
     EIP712 --> SK_REGISTRY
     SK_REGISTRY --> EXECUTOR
 
-    SCHEDULER & MONITOR --> DB
+    SCHEDULER --> DB
+    MONITOR --> DB
     MONITOR --> SIM_ENGINE
     SIM_ENGINE -->|Valid Simulation| RELAYER
     SIM_ENGINE -.->|Simulation Reverted| DB
@@ -73,9 +74,13 @@ graph TD
     EXECUTOR --> GUARD
     GUARD --> SLIPPAGE
     SLIPPAGE --> PAUSE
-    PAUSE --> LENDING & DEX & VAULTS
+    PAUSE --> LENDING
+    PAUSE --> DEX
+    PAUSE --> VAULTS
 
-    LENDING & DEX & VAULTS --> ARC_CHAIN
+    LENDING --> ARC_CHAIN
+    DEX --> ARC_CHAIN
+    VAULTS --> ARC_CHAIN
     ARC_CHAIN --> USDC_NATIVE
 ```
 
