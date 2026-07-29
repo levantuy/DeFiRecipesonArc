@@ -2,39 +2,57 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, RefreshCw, Layers, ShieldCheck, Play } from 'lucide-react';
+import { Layers, Play } from 'lucide-react';
 import { RecipeConfig } from './SimulationModal';
 
-const RECIPES: (RecipeConfig & { description: string; risk: string; apy: string })[] = [
+export const RECIPES: (RecipeConfig & { description: string; risk: string; apy: string; defaultIntervalHours: number })[] = [
   {
     id: 'recipe-auto-compounder',
+    recipeType: 'AUTO_COMPOUNDER',
     name: 'USDC Yield Auto-Compounder',
     description: 'Deposits USDC into Arc Lending, claims accrued rewards weekly, swaps to USDC via Arc DEX, and re-deposits for maximum yield.',
     targetProtocol: 'Arc Lending Protocol',
+    targetProtocolAddress: '0x0000000000000000000000000000000000001001',
     maxSlippageBps: 50, // 0.5%
     estimatedGasUsdc: '0.0025',
+    expectedNetApy: '8.4%',
+    riskWarning: 'Rewards may vary with protocol emission changes and market liquidity.',
+    routeSteps: ['Claim ARC rewards on Arc Lending', 'Swap ARC to USDC on Arc DEX', 'Deposit USDC back to Arc Lending'],
     risk: 'Low Risk',
     apy: '8.4% APY',
+    defaultIntervalHours: 24 * 7,
   },
   {
     id: 'recipe-recurring-dca',
+    recipeType: 'RECURRING_DCA',
     name: 'USDC Recurring DCA',
     description: 'Automated periodic DCA asset accumulation. Periodically swaps fixed USDC for target assets (ETH/BTC) on Arc DEX with strict slippage cap.',
     targetProtocol: 'Arc Official DEX Router',
+    targetProtocolAddress: '0x0000000000000000000000000000000000001002',
     maxSlippageBps: 100, // 1.0%
     estimatedGasUsdc: '0.0018',
+    expectedNetApy: 'Market dependent',
+    riskWarning: 'Execution price may change when market volatility increases.',
+    routeSteps: ['Pull fixed USDC allocation', 'Swap USDC to target asset on Arc DEX', 'Transfer acquired asset to user vault'],
     risk: 'Low-Medium Risk',
     apy: 'DCA Strategy',
+    defaultIntervalHours: 24,
   },
   {
     id: 'recipe-smart-rebalancer',
+    recipeType: 'SMART_YIELD_REBALANCER',
     name: 'USDC Smart Yield Rebalancer',
     description: 'Dynamic yield optimization. Automatically rebalances capital between Arc Lending and Treasury Vaults when APY delta exceeds 1.5%.',
     targetProtocol: 'Arc Lending & Treasury Vaults',
+    targetProtocolAddress: '0x0000000000000000000000000000000000001003',
     maxSlippageBps: 50,
     estimatedGasUsdc: '0.0032',
+    expectedNetApy: 'Dynamic',
+    riskWarning: 'Frequent APY swings can increase execution frequency and gas usage.',
+    routeSteps: ['Compare Arc Lending APY vs Treasury APY', 'Withdraw from lower-yield venue', 'Deposit into higher-yield venue'],
     risk: 'Medium Risk',
     apy: 'Dynamic APY',
+    defaultIntervalHours: 6,
   },
 ];
 

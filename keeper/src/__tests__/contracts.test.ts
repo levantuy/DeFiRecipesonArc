@@ -7,6 +7,8 @@ import {
   SHARED_EXECUTOR_PROXY_ABI,
 } from '../config/contracts';
 
+type AbiItemWithName = { name?: string };
+
 describe('Contracts Configuration', () => {
   it('should have valid Arc Testnet chain configuration', () => {
     expect(ARC_TESTNET_CONFIG.chainId).toBe(5042002);
@@ -26,12 +28,12 @@ describe('Contracts Configuration', () => {
     expect(RECIPE_GUARDRAIL_ABI).toBeDefined();
     expect(SHARED_EXECUTOR_PROXY_ABI).toBeDefined();
 
-    const sessionKeyFunctions = SESSION_KEY_REGISTRY_ABI.map((item: any) => item.name);
+    const sessionKeyFunctions = SESSION_KEY_REGISTRY_ABI.map((item) => (item as AbiItemWithName).name);
     expect(sessionKeyFunctions).toContain('getSessionPermission');
     expect(sessionKeyFunctions).toContain('isValidSessionKey');
     expect(sessionKeyFunctions).toContain('registerSessionKey');
 
-    const executorFunctions = SHARED_EXECUTOR_PROXY_ABI.map((item: any) => item.name);
+    const executorFunctions = SHARED_EXECUTOR_PROXY_ABI.map((item) => (item as AbiItemWithName).name);
     expect(executorFunctions).toContain('executeRecipeStep');
   });
 });

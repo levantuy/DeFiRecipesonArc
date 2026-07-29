@@ -130,6 +130,27 @@ export const SHARED_EXECUTOR_PROXY_ABI = [
   },
   {
     type: 'function',
+    name: 'isUserPaused',
+    inputs: [{ name: '', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'pauseMyRecipes',
+    inputs: [],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'unpauseMyRecipes',
+    inputs: [],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'sessionKeyRegistry',
     inputs: [],
     outputs: [{ name: '', type: 'address', internalType: 'address' }],

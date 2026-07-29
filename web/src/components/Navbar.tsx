@@ -3,8 +3,14 @@
 import React from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ShieldCheck, Zap } from 'lucide-react';
+import { useChainId } from 'wagmi';
+
+const ARC_CHAIN_ID = 5042002;
 
 export const Navbar: React.FC = () => {
+  const chainId = useChainId();
+  const isArcChain = chainId === ARC_CHAIN_ID;
+
   return (
     <header className="sticky top-0 z-50 glass-card rounded-none border-b border-cardBorder px-6 py-4 flex items-center justify-between">
       <div className="flex items-center space-x-3">
@@ -22,8 +28,8 @@ export const Navbar: React.FC = () => {
 
       <div className="flex items-center space-x-4">
         <div className="hidden md:flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-mono text-emerald-400">
-          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>Arc Testnet (5042002)</span>
+          <span className={`h-2 w-2 rounded-full ${isArcChain ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+          <span>{isArcChain ? 'Arc Testnet (5042002)' : 'Wrong Network - switch to Arc 5042002'}</span>
         </div>
         <ConnectButton showBalance={false} />
       </div>

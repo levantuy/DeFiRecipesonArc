@@ -12,6 +12,48 @@ interface ActiveRecipeItem {
   createdAt: string;
 }
 
+interface CreateRecipePayload {
+  action?: string;
+  userAddress?: string;
+  recipeType?: string;
+  recipeName?: string;
+  targetProtocol?: string;
+  targetProtocolAddress?: string;
+  maxSlippageBps?: number;
+  maxUsdcSpendLimit?: string;
+  status?: string;
+  parametersJson?: Record<string, unknown>;
+}
+
+const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
+
+function getKeeperApiBaseUrl() {
+  const configured = process.env.KEEPER_API_BASE_URL || process.env.NEXT_PUBLIC_KEEPER_API_BASE_URL;
+  return (configured || DEFAULT_KEEPER_API_BASE_URL).trim().replace(/\/$/, '');
+}
+
+async function postToKeeper(path: string, payload: Record<string, unknown>) {
+  const response = await fetch(`${getKeeperApiBaseUrl()}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+
+  const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok || !data) {
+    const errorText =
+      data && typeof data.error === 'string'
+        ? data.error
+        : `Keeper sync failed with status ${response.status}.`;
+    throw new Error(errorText);
+  }
+
+  return data;
+}
+
 // In-memory active recipe storage for Web UI (syncs with keeper DB if available)
 const inMemoryRecipes: ActiveRecipeItem[] = [
   {
@@ -44,7 +86,63 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as CreateRecipePayload;
+
+    if (body.action === 'register') {
+      if (!body.userAddress || !body.recipeType) {
+        return NextResponse.json(
+          { success: false, error: 'userAddress and recipeType are required for register action.' },
+          { status: 400 }
+        );
+      }
+
+      const targetProtocol = body.targetProtocolAddress || body.targetProtocol || '0x0000000000000000000000000000000000000000';
+      const keeperResult = await postToKeeper('/recipes/register', {
+        userAddress: body.userAddress,
+        recipeType: body.recipeType,
+        targetProtocol,
+        parametersJson: body.parametersJson || {},
+      });
+
+      const newRecipe: ActiveRecipeItem = {
+        id: `recipe-${Date.now()}`,
+        userAddress: body.userAddress,
+        recipeType: body.recipeType,
+        recipeName: body.recipeName || 'Custom Recipe',
+        targetProtocol: body.targetProtocol || targetProtocol,
+        maxSlippageBps: body.maxSlippageBps || 50,
+        maxUsdcSpendLimit: body.maxUsdcSpendLimit || '1000',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+      inMemoryRecipes.unshift(newRecipe);
+
+      return NextResponse.json({ success: true, recipe: newRecipe, keeper: keeperResult });
+    }
+
+    if (body.action === 'status') {
+      if (!body.userAddress || !body.recipeType || !body.status) {
+        return NextResponse.json(
+          { success: false, error: 'userAddress, recipeType, and status are required for status action.' },
+          { status: 400 }
+        );
+      }
+
+      const keeperResult = await postToKeeper('/recipes/status', {
+        userAddress: body.userAddress,
+        recipeType: body.recipeType,
+        status: body.status,
+      });
+
+      for (const recipe of inMemoryRecipes) {
+        if (recipe.userAddress === body.userAddress && recipe.recipeType === body.recipeType) {
+          recipe.status = body.status;
+        }
+      }
+
+      return NextResponse.json({ success: true, keeper: keeperResult });
+    }
+
     const newRecipe: ActiveRecipeItem = {
       id: `recipe-${Date.now()}`,
       userAddress: body.userAddress || '0xUserAddress',
@@ -58,7 +156,8 @@ export async function POST(request: Request) {
     };
     inMemoryRecipes.unshift(newRecipe);
     return NextResponse.json({ success: true, recipe: newRecipe });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Invalid request payload';
+    return NextResponse.json({ success: false, error: errorMessage }, { status: 400 });
   }
 }

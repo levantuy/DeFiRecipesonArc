@@ -1,7 +1,9 @@
+import { RUNTIME_CONFIG } from './runtime';
+
 export const ARC_TESTNET_CONFIG = {
   chainId: 5042002,
   chainName: 'Arc Testnet',
-  rpcUrl: process.env.ARC_TESTNET_RPC_URL || 'https://rpc.testnet.arc.network',
+  rpcUrl: RUNTIME_CONFIG.arcRpcUrl,
   usdcAddress: '0x3600000000000000000000000000000000000000' as `0x${string}`,
 };
 

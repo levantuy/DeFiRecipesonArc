@@ -8,7 +8,7 @@ import { CONTRACT_ADDRESSES } from '../config/contracts';
 interface AuditLog {
   id: string;
   recipeName: string;
-  txHash: string;
+  txHash: `0x${string}`;
   timestamp: string;
   status: 'CONFIRMED' | 'SIMULATED';
   gasUsedUsdc: string;
@@ -18,7 +18,7 @@ const MOCK_AUDIT_LOGS: AuditLog[] = [
   {
     id: 'log-1',
     recipeName: 'USDC Yield Auto-Compounder',
-    txHash: '0x8f2a...39e1',
+    txHash: '0x8f2a0000000000000000000000000000000000000000000000000000000039e1',
     timestamp: '10 mins ago',
     status: 'CONFIRMED',
     gasUsedUsdc: '0.0021 USDC',
@@ -26,7 +26,7 @@ const MOCK_AUDIT_LOGS: AuditLog[] = [
   {
     id: 'log-2',
     recipeName: 'USDC Recurring DCA',
-    txHash: '0x4c1d...91b8',
+    txHash: '0x4c1d0000000000000000000000000000000000000000000000000000000091b8',
     timestamp: '2 hours ago',
     status: 'CONFIRMED',
     gasUsedUsdc: '0.0017 USDC',
@@ -157,7 +157,16 @@ export const PortfolioTracker: React.FC = () => {
                       <span>{log.status}</span>
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-blue-400 text-xs">{log.txHash}</td>
+                  <td className="px-4 py-3 font-mono text-blue-400 text-xs">
+                    <a
+                      href={`https://testnet.arcscan.app/tx/${log.txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                    >
+                      {`${log.txHash.slice(0, 10)}...${log.txHash.slice(-6)}`}
+                    </a>
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs">{log.gasUsedUsdc}</td>
                   <td className="px-4 py-3 text-slate-400 text-xs">{log.timestamp}</td>
                 </tr>

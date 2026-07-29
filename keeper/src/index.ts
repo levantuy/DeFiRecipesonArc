@@ -1,18 +1,19 @@
 import 'dotenv/config';
+import http from 'node:http';
 import { PrismaClient } from '@prisma/client';
-import { createWalletClient, http, formatEther } from 'viem';
+import { createWalletClient, http as viemHttp } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES } from './config/contracts';
+import { getKeeperPrivateKey, RUNTIME_CONFIG } from './config/runtime';
 import { recipeQueue, recipeWorker, executeRecipeStepDirectly } from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
+import { registerOrActivateRecipe, updateRecipeStatus } from './api/recipeSyncApi';
 
 export const prisma = new PrismaClient();
 
-const KEEPER_PRIVATE_KEY = (process.env.KEEPER_PRIVATE_KEY) as `0x${string}`;
-
 export function getKeeperAccount() {
-  return privateKeyToAccount(KEEPER_PRIVATE_KEY);
+  return privateKeyToAccount(getKeeperPrivateKey());
 }
 
 export function getKeeperWalletClient() {
@@ -20,8 +21,115 @@ export function getKeeperWalletClient() {
   return createWalletClient({
     account,
     chain: arcTestnet,
-    transport: http(ARC_TESTNET_CONFIG.rpcUrl),
+    transport: viemHttp(ARC_TESTNET_CONFIG.rpcUrl, {
+      timeout: RUNTIME_CONFIG.arcRpcTimeoutMs,
+      retryCount: RUNTIME_CONFIG.arcRpcRetryCount,
+    }),
   });
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
+  if (rawBody.length === 0) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error('Request body must be valid JSON.');
+  }
+}
+
+function setJsonResponse(res: http.ServerResponse, statusCode: number, payload: Record<string, unknown>) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.end(JSON.stringify(payload));
+}
+
+function createHealthServer(port: number) {
+  const startedAt = new Date().toISOString();
+  const server = http.createServer(async (req, res) => {
+    const requestUrl = new URL(req.url || '/', 'http://localhost');
+    const pathName = requestUrl.pathname;
+    const method = (req.method || 'GET').toUpperCase();
+
+    if (method === 'OPTIONS') {
+      setJsonResponse(res, 204, {});
+      return;
+    }
+
+    if (pathName === '/recipes/register' && method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const payload = await registerOrActivateRecipe(prisma, body);
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
+    if (pathName === '/recipes/status' && method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const payload = await updateRecipeStatus(prisma, body);
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
+    if (pathName !== '/healthz') {
+      setJsonResponse(res, 404, { message: 'Not found' });
+      return;
+    }
+
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      setJsonResponse(res, 200, {
+        status: 'ok',
+        service: 'keeper',
+        chainId: ARC_TESTNET_CONFIG.chainId,
+        startedAt,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      setJsonResponse(res, 503, {
+        status: 'degraded',
+        service: 'keeper',
+        reason: getErrorMessage(error),
+      });
+    }
+  });
+
+  server.listen(port, () => {
+    console.log(`[Health] Keeper health endpoint listening at http://localhost:${port}/healthz`);
+  });
+
+  return server;
 }
 
 /**
@@ -45,9 +153,11 @@ export async function startKeeperEngine() {
     await prisma.$connect();
     const activeRecipesCount = await prisma.activeRecipe.count();
     console.log(`[Database] PostgreSQL connected successfully. Active recipes in DB: ${activeRecipesCount}`);
-  } catch (err: any) {
-    console.warn(`[Database Warning] Could not query database: ${err.message}`);
+  } catch (err: unknown) {
+    console.warn(`[Database Warning] Could not query database: ${getErrorMessage(err)}`);
   }
+
+  const healthServer = createHealthServer(RUNTIME_CONFIG.keeperHealthPort);
 
   // Start Cron Poll Scheduler
   startCronScheduler(30_000);
@@ -58,6 +168,9 @@ export async function startKeeperEngine() {
     stopCronScheduler();
     await recipeWorker.close();
     await recipeQueue.close();
+    await new Promise<void>((resolve) => {
+      healthServer.close(() => resolve());
+    });
     await prisma.$disconnect();
     process.exit(0);
   });
@@ -67,6 +180,9 @@ export async function startKeeperEngine() {
     stopCronScheduler();
     await recipeWorker.close();
     await recipeQueue.close();
+    await new Promise<void>((resolve) => {
+      healthServer.close(() => resolve());
+    });
     await prisma.$disconnect();
     process.exit(0);
   });

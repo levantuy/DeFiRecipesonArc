@@ -6,11 +6,13 @@ import { arcTestnet } from 'viem/chains';
 import { PrismaClient, ExecutionStatus } from '@prisma/client';
 import { simulateRecipeStep, SimulationRequest } from '../simulation/staticSimulationEngine';
 import { ARC_TESTNET_CONFIG, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
+import { getKeeperPrivateKey, RUNTIME_CONFIG } from '../config/runtime';
 
 const prisma = new PrismaClient();
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const KEEPER_PRIVATE_KEY = (process.env.KEEPER_PRIVATE_KEY) as `0x${string}`;
+const REDIS_URL = RUNTIME_CONFIG.redisUrl;
+const TX_RETRY_BASE_DELAY_MS = 1500;
+const TX_RETRY_MAX_DELAY_MS = 12000;
 
 let lastRedisErrorLogTime = 0;
 
@@ -18,7 +20,7 @@ export const redisConnection = new Redis(REDIS_URL, {
   maxRetriesPerRequest: null,
   lazyConnect: true,
   retryStrategy(times) {
-    return Math.min(times * 1000, 10000);
+    return Math.min(times * 1000, RUNTIME_CONFIG.redisRetryMaxDelayMs);
   },
 });
 
@@ -30,8 +32,77 @@ redisConnection.on('error', (err) => {
   }
 });
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
+function serializeError(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name} ${error.message}`;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const normalized = serializeError(error).toLowerCase();
+  const hasHttp429 = /\b429\b/.test(normalized) && normalized.includes('too many requests');
+  return (
+    normalized.includes('request limit reached') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('-32011') ||
+    normalized.includes('could not coalesce error') ||
+    hasHttp429
+  );
+}
+
+function isRetryableRpcError(error: unknown): boolean {
+  if (isRateLimitError(error)) {
+    return true;
+  }
+
+  const normalized = serializeError(error).toLowerCase();
+  return (
+    normalized.includes('timeout') ||
+    normalized.includes('timed out') ||
+    normalized.includes('network error') ||
+    normalized.includes('socket hang up') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('503') ||
+    normalized.includes('temporarily unavailable')
+  );
+}
+
+function getRetryDelayMs(attempt: number): number {
+  const exponentialDelay = Math.min(TX_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), TX_RETRY_MAX_DELAY_MS);
+  const jitterMs = Math.floor(Math.random() * 500);
+  return exponentialDelay + jitterMs;
+}
+
+function getRpcCandidates(): string[] {
+  const urls = [
+    RUNTIME_CONFIG.arcRpcUrl,
+    ...RUNTIME_CONFIG.arcRpcFallbackUrls,
+  ];
+
+  return Array.from(
+    new Set(urls.map((entry) => entry.trim()).filter((entry) => entry.length > 0))
+  );
+}
+
 export interface RecipeExecutionJobData {
   recipeId: string;
+  recipeType?: string;
   userAddress: `0x${string}`;
   executorProxyAddress: `0x${string}`;
   targetProtocolAddress: `0x${string}`;
@@ -40,23 +111,34 @@ export interface RecipeExecutionJobData {
   keeperAddress: `0x${string}`;
 }
 
+function getRecipeLogContext(data: RecipeExecutionJobData): string {
+  return `[recipeId=${data.recipeId} userAddress=${data.userAddress} recipeType=${data.recipeType || 'UNKNOWN'}]`;
+}
+
 export const recipeQueue = new Queue<RecipeExecutionJobData>('recipe-execution-queue', {
   connection: redisConnection,
+  defaultJobOptions: {
+    removeOnComplete: 200,
+    removeOnFail: 500,
+  },
 });
 
 /**
  * Direct execution function (used by Worker or direct invocation)
  */
 export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
-  console.log(`[Keeper Engine] Executing step for recipe ${data.recipeId}`);
+  const context = getRecipeLogContext(data);
+  console.log(`[Keeper Engine] Executing step ${context}`);
 
   // Create Execution Log in Database if activeRecipe exists
   let executionLogId: string | null = null;
+  let hasPersistedRecipe = false;
   try {
     const recipeExists = await prisma.activeRecipe.findUnique({
       where: { id: data.recipeId },
     });
     if (recipeExists) {
+      hasPersistedRecipe = true;
       const log = await prisma.executionLog.create({
         data: {
           activeRecipeId: data.recipeId,
@@ -65,7 +147,7 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
       });
       executionLogId = log.id;
     }
-  } catch (err: any) {
+  } catch {
     // Ignore DB log creation error if recipe is non-persisted or mock
   }
 
@@ -82,7 +164,7 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   const simResult = await simulateRecipeStep(simReq);
 
   if (!simResult.success) {
-    console.error(`[Simulation Failed] Recipe ${data.recipeId}: ${simResult.errorMessage}`);
+    console.error(`[Simulation Failed] ${context}: ${simResult.errorMessage}`);
     if (executionLogId) {
       await prisma.executionLog.update({
         where: { id: executionLogId },
@@ -90,7 +172,9 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
           status: ExecutionStatus.SIMULATION_FAILED,
           errorMessage: simResult.errorMessage,
         },
-      }).catch(() => { });
+      }).catch(() => {
+        console.warn('[Keeper Engine] Failed to persist simulation failure log.');
+      });
     }
     throw new Error(`Simulation Failed: ${simResult.errorMessage}`);
   }
@@ -98,22 +182,29 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   console.log(`[Simulation Passed] Gas Estimate: ${simResult.estimatedGasUsdc} USDC native units`);
 
   // Step 2: Relayer Transaction Submission with Viem & Exponential Backoff Retry Policy
-  const MAX_RETRIES = 3;
+  const maxRetries = RUNTIME_CONFIG.keeperTxRetryMaxAttempts;
   let attempt = 0;
   let hash: `0x${string}` | null = null;
   let lastError: Error | null = null;
 
-  const account = privateKeyToAccount(KEEPER_PRIVATE_KEY);
-  const walletClient = createWalletClient({
-    account,
-    chain: arcTestnet,
-    transport: http(ARC_TESTNET_CONFIG.rpcUrl),
-  });
+  const account = privateKeyToAccount(getKeeperPrivateKey());
+  const rpcCandidates = getRpcCandidates();
+  console.log(`[Tx Relayer] ${context} RPC candidates: ${rpcCandidates.join(', ')}`);
 
-  while (attempt < MAX_RETRIES) {
+  while (attempt < maxRetries) {
     attempt++;
+    const rpcUrl = rpcCandidates[(attempt - 1) % rpcCandidates.length] || ARC_TESTNET_CONFIG.rpcUrl;
+    const walletClient = createWalletClient({
+      account,
+      chain: arcTestnet,
+      transport: http(rpcUrl, {
+        timeout: RUNTIME_CONFIG.arcRpcTimeoutMs,
+        retryCount: RUNTIME_CONFIG.arcRpcRetryCount,
+      }),
+    });
+
     try {
-      console.log(`[Tx Relayer] Attempt ${attempt}/${MAX_RETRIES} submitting transaction...`);
+      console.log(`[Tx Relayer] ${context} attempt ${attempt}/${maxRetries} submitting via ${rpcUrl}...`);
       hash = await walletClient.writeContract({
         address: data.executorProxyAddress,
         abi: SHARED_EXECUTOR_PROXY_ABI,
@@ -121,19 +212,29 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
         args: [data.userAddress, data.targetProtocolAddress, data.callData, BigInt(data.minAmountOut)],
       });
       break; // Success, exit retry loop
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`[Tx Relayer Warning] Attempt ${attempt} failed: ${err.message}`);
-      if (attempt < MAX_RETRIES) {
-        const backoffMs = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500);
-        console.log(`[Tx Relayer] Waiting ${backoffMs}ms before retrying...`);
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      lastError = err instanceof Error ? err : new Error(message);
+      console.warn(`[Tx Relayer Warning] ${context} attempt ${attempt} failed: ${message}`);
+
+      const canRetry = isRetryableRpcError(err) && attempt < maxRetries;
+      if (canRetry) {
+        const backoffMs = getRetryDelayMs(attempt);
+        if (isRateLimitError(err) && rpcCandidates.length > 1) {
+          const nextRpcUrl = rpcCandidates[attempt % rpcCandidates.length];
+          console.warn(`[Tx Relayer Notice] ${context} rate limit on ${rpcUrl}. Switching next retry to ${nextRpcUrl}.`);
+        }
+        console.log(`[Tx Relayer] ${context} waiting ${backoffMs}ms before retrying...`);
         await new Promise((res) => setTimeout(res, backoffMs));
+        continue;
       }
+
+      throw lastError;
     }
   }
 
   if (!hash) {
-    console.error(`[Tx Execution Failed] Recipe ${data.recipeId} after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+    console.error(`[Tx Execution Failed] ${context} after ${maxRetries} attempts: ${lastError?.message}`);
     if (executionLogId) {
       await prisma.executionLog.update({
         where: { id: executionLogId },
@@ -141,12 +242,14 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
           status: ExecutionStatus.REVERTED,
           errorMessage: lastError?.message || 'Execution failed after retries',
         },
-      }).catch(() => { });
+      }).catch(() => {
+        console.warn('[Keeper Engine] Failed to persist reverted execution log.');
+      });
     }
     throw lastError || new Error('Tx broadcast failed after max retries');
   }
 
-  console.log(`[Tx Submitted] Recipe ${data.recipeId} Tx Hash: ${hash}`);
+  console.log(`[Tx Submitted] ${context} txHash=${hash}`);
 
   if (executionLogId) {
     await prisma.executionLog.update({
@@ -156,14 +259,19 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
         txHash: hash,
         executedAt: new Date(),
       },
-    }).catch(() => { });
+    }).catch(() => {
+      console.warn('[Keeper Engine] Failed to persist submitted execution log.');
+    });
   }
 
   // Step 3: Verify Sub-Second Finality on Arc Network
   try {
     const { publicClient } = await import('../simulation/staticSimulationEngine');
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 10_000 });
-    console.log(`[Tx Finalized] Recipe ${data.recipeId} confirmed in block ${receipt.blockNumber} (Status: ${receipt.status})`);
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      timeout: RUNTIME_CONFIG.keeperTxReceiptTimeoutMs,
+    });
+    console.log(`[Tx Finalized] ${context} block=${receipt.blockNumber} status=${receipt.status}`);
 
     if (executionLogId && receipt.status === 'success') {
       await prisma.executionLog.update({
@@ -174,15 +282,19 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
         },
       }).catch(() => { });
     }
-  } catch (receiptErr: any) {
-    console.warn(`[Finality Warning] Could not wait for tx receipt for ${hash}: ${receiptErr.message}`);
+  } catch (receiptErr: unknown) {
+    console.warn(`[Finality Warning] ${context} could not wait for tx receipt ${hash}: ${getErrorMessage(receiptErr)}`);
   }
 
-  // Update ActiveRecipe lastExecutedAt
-  await prisma.activeRecipe.update({
-    where: { id: data.recipeId },
-    data: { lastExecutedAt: new Date() },
-  }).catch(() => { });
+  // Update ActiveRecipe lastExecutedAt for persisted recipes.
+  if (hasPersistedRecipe) {
+    await prisma.activeRecipe.update({
+      where: { id: data.recipeId },
+      data: { lastExecutedAt: new Date() },
+    }).catch(() => {
+      console.warn(`[Keeper Engine] Failed to update lastExecutedAt ${context}.`);
+    });
+  }
 
   return {
     status: 'SIMULATED_AND_EXECUTED',
@@ -197,7 +309,7 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
 export const recipeWorker = new Worker<RecipeExecutionJobData>(
   'recipe-execution-queue',
   async (job: Job<RecipeExecutionJobData>) => {
-    console.log(`[BullMQ Worker] Processing job ${job.id} for recipe ${job.data.recipeId}`);
+    console.log(`[BullMQ Worker] Processing job ${job.id} ${getRecipeLogContext(job.data)}`);
     return await executeRecipeStepDirectly(job.data);
   },
   {

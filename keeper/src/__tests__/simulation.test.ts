@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Abi } from 'viem';
 import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 
 describe('Static Simulation Engine', () => {
@@ -29,8 +30,13 @@ describe('Static Simulation Engine', () => {
   it('should return estimated gas when simulation succeeds', async () => {
     vi.spyOn(publicClient, 'simulateContract').mockResolvedValueOnce({
       result: null,
-      request: {},
-    } as any);
+      request: {
+        abi: [] as unknown as Abi,
+        address: '0x0000000000000000000000000000000000000001',
+        functionName: 'executeRecipeStep',
+        args: [],
+      },
+    });
     vi.spyOn(publicClient, 'estimateContractGas').mockResolvedValueOnce(85000n);
 
     const result = await simulateRecipeStep(dummyRequest);
