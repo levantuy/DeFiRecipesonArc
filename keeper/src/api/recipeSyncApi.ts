@@ -1,4 +1,6 @@
 import { Prisma, PrismaClient, RecipeStatus, RecipeType } from '@prisma/client';
+import type { Address } from 'viem';
+import { publicClient } from '../simulation/staticSimulationEngine';
 
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const RECIPE_TYPE_SET = new Set(Object.values(RecipeType));
@@ -82,6 +84,19 @@ function parseRegisterPayload(rawBody: unknown): {
   };
 }
 
+async function assertTargetProtocolHasCode(targetProtocol: string): Promise<void> {
+  const bytecode = await publicClient.getBytecode({
+    address: targetProtocol as Address,
+  });
+
+  if (!bytecode || bytecode === '0x') {
+    throw new Error(
+      `targetProtocol ${targetProtocol} has no deployed contract bytecode on Arc Testnet. ` +
+      `Use a deployed protocol contract address.`
+    );
+  }
+}
+
 function parseStatusPayload(rawBody: unknown): {
   userAddress: string;
   recipeType: RecipeType;
@@ -110,6 +125,8 @@ export async function registerOrActivateRecipe(
   });
 
   console.log(`[Keeper API] Register/Activate requested ${context}`);
+
+  await assertTargetProtocolHasCode(payload.targetProtocol);
 
   const existingRecipe = await prisma.activeRecipe.findFirst({
     where: {

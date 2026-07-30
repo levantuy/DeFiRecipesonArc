@@ -18,6 +18,36 @@ export const CONTRACT_ADDRESSES = {
 
 export const SESSION_KEY_REGISTRY_ABI = [
   {
+    type: 'error',
+    name: 'InvalidSessionKeyAddress',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyExpired',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyAlreadyRevoked',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyNotFound',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'ExceededSpendLimit',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'UnauthorizedExecutor',
+    inputs: [{ name: 'caller', type: 'address', internalType: 'address' }],
+  },
+  {
     type: 'function',
     name: 'getSessionPermission',
     inputs: [
@@ -53,6 +83,13 @@ export const SESSION_KEY_REGISTRY_ABI = [
   },
   {
     type: 'function',
+    name: 'isExecutorAuthorized',
+    inputs: [{ name: 'executor', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'registerSessionKey',
     inputs: [
       { name: 'sessionKey', type: 'address', internalType: 'address' },
@@ -72,6 +109,24 @@ export const SESSION_KEY_REGISTRY_ABI = [
 ] as const;
 
 export const RECIPE_GUARDRAIL_ABI = [
+  {
+    type: 'error',
+    name: 'ProtocolNotWhitelisted',
+    inputs: [{ name: 'protocol', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
+    name: 'SelectorNotAllowed',
+    inputs: [
+      { name: 'protocol', type: 'address', internalType: 'address' },
+      { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'InvalidAddress',
+    inputs: [],
+  },
   {
     type: 'function',
     name: 'isProtocolWhitelisted',
@@ -102,6 +157,77 @@ export const RECIPE_GUARDRAIL_ABI = [
 ] as const;
 
 export const SHARED_EXECUTOR_PROXY_ABI = [
+  {
+    type: 'error',
+    name: 'UnauthorizedKeeper',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'ExecutionFailed',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SlippageExceeded',
+    inputs: [
+      { name: 'expectedMin', type: 'uint256', internalType: 'uint256' },
+      { name: 'actualAmount', type: 'uint256', internalType: 'uint256' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'InvalidAddress',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'UserExecutionPaused',
+    inputs: [{ name: 'user', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
+    name: 'ProtocolNotWhitelisted',
+    inputs: [{ name: 'protocol', type: 'address', internalType: 'address' }],
+  },
+  {
+    type: 'error',
+    name: 'SelectorNotAllowed',
+    inputs: [
+      { name: 'protocol', type: 'address', internalType: 'address' },
+      { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'InvalidSessionKeyAddress',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyExpired',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyAlreadyRevoked',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'SessionKeyNotFound',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'ExceededSpendLimit',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'UnauthorizedExecutor',
+    inputs: [{ name: 'caller', type: 'address', internalType: 'address' }],
+  },
   {
     type: 'function',
     name: 'executeRecipeStep',

@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecipeStatus, RecipeType } from '@prisma/client';
 
-const { findManyMock, queueAddMock, simulateRecipeStepMock } = vi.hoisted(() => {
+const { findManyMock, queueAddMock, simulateRecipeStepMock, getBytecodeMock, readContractMock } = vi.hoisted(() => {
   return {
     findManyMock: vi.fn(),
     queueAddMock: vi.fn(),
     simulateRecipeStepMock: vi.fn(),
+    getBytecodeMock: vi.fn(),
+    readContractMock: vi.fn(),
   };
 });
 
@@ -32,6 +34,10 @@ vi.mock('../schedulers/queueScheduler', () => ({
 
 vi.mock('../simulation/staticSimulationEngine', () => ({
   simulateRecipeStep: simulateRecipeStepMock,
+  publicClient: {
+    getBytecode: getBytecodeMock,
+    readContract: readContractMock,
+  },
 }));
 
 vi.mock('../index', () => ({
@@ -59,6 +65,35 @@ describe('Cron Scheduler Recipe Triggering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     simulateRecipeStepMock.mockResolvedValue({ success: true, estimatedGasUsdc: 90000n });
+    getBytecodeMock.mockResolvedValue('0x1234');
+    readContractMock.mockResolvedValue(true);
+  });
+
+  it('logs actionable hint and skips enqueue when simulation fails with UnauthorizedKeeper', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    findManyMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'unauthorized-keeper',
+        recipeType: RecipeType.AUTO_COMPOUNDER,
+      }),
+    ]);
+    simulateRecipeStepMock.mockResolvedValue({
+      success: false,
+      errorMessage: 'Execution reverted: UnauthorizedKeeper()',
+    });
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(queueAddMock).not.toHaveBeenCalled();
+    const actionRequiredWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter((value) =>
+        typeof value === 'string' && value.includes('Keeper session key is not valid for this user')
+      );
+    expect(actionRequiredWarnings).toHaveLength(1);
+
+    warnSpy.mockRestore();
   });
 
   it('enqueues DCA recipe with normalized 6-decimal USDC spend value', async () => {
@@ -102,5 +137,30 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     const jobData = queueAddMock.mock.calls[0][1];
     expect(jobData.recipeId).toBe('good-compounder');
+  });
+
+  it('logs action required and skips enqueue when selector is not allowed by guardrail', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    findManyMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'selector-blocked',
+        recipeType: RecipeType.AUTO_COMPOUNDER,
+        targetProtocol: '0x4444444444444444444444444444444444444444',
+      }),
+    ]);
+    readContractMock.mockResolvedValue(false);
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const actionRequiredWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter((value) => typeof value === 'string' && value.includes('Guardrail blocks selector'));
+    expect(actionRequiredWarnings).toHaveLength(1);
+
+    warnSpy.mockRestore();
   });
 });

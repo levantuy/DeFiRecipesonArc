@@ -138,7 +138,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
             <div className="flex items-start space-x-2.5 p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-300">
               <ShieldAlert className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
-                Simulated off-chain via Viem eth_call before broadcast. If simulation fails, Keeper will skip execution to avoid USDC gas waste.
+                One-click flow: sign in wallet once to register/refresh delegation when needed. If delegation is already valid, activation continues without a new on-chain registration tx.
               </span>
             </div>
           </div>
@@ -161,7 +161,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
               }}
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 hover:from-blue-500 hover:to-emerald-400 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-blue-500/20 transition-all"
             >
-              {isConfirming ? 'Activating...' : 'Sign & Activate Delegation'}
+              {isConfirming ? 'Activating...' : 'One-Click Activate'}
             </button>
           </div>
         </motion.div>

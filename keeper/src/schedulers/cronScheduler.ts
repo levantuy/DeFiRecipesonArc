@@ -1,12 +1,12 @@
 import { PrismaClient, RecipeStatus, RecipeType } from '@prisma/client';
 import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
-import { simulateRecipeStep } from '../simulation/staticSimulationEngine';
+import { publicClient, simulateRecipeStep } from '../simulation/staticSimulationEngine';
 import {
   buildAutoCompounderCallData,
   buildDcaCallData,
   buildRebalancerCallData,
 } from '../simulation/recipePayloads';
-import { CONTRACT_ADDRESSES } from '../config/contracts';
+import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
 import { getKeeperAccount } from '../index';
 
 const prisma = new PrismaClient();
@@ -16,6 +16,24 @@ const DEFAULT_DCA_USDC_BASE_UNITS = 50_000_000n; // 50 USDC
 const MAX_USDC_SPEND_PER_TX_BASE_UNITS = 500_000_000n; // 500 USDC
 const MIN_CHECK_INTERVAL_HOURS = 1;
 const MAX_CHECK_INTERVAL_HOURS = 24 * 30;
+const SIMULATION_RATE_LIMIT_BACKOFF_MS = 45_000;
+
+let simulationBackoffUntilMs = 0;
+let lastSimulationBackoffNoticeMs = 0;
+let hasLoggedUnauthorizedExecutorHint = false;
+const unauthorizedKeeperHintsLogged = new Set<string>();
+const protocolCodeCache = new Map<string, { hasCode: boolean; checkedAtMs: number }>();
+const protocolNoCodeWarned = new Set<string>();
+const PROTOCOL_CODE_CACHE_TTL_MS = 5 * 60 * 1000;
+const selectorAllowedCache = new Map<string, { isAllowed: boolean; checkedAtMs: number }>();
+const selectorNotAllowedHintsLogged = new Set<string>();
+const SELECTOR_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
+  AUTO_COMPOUNDER: 'claimRewards() / 0x372500ab',
+  RECURRING_DCA: 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
+  SMART_YIELD_REBALANCER: 'withdrawForUser(address,uint256)',
+};
 
 interface RecipeParameters {
   checkIntervalHours?: number;
@@ -105,12 +123,113 @@ function parseDcaAmountUsdcBaseUnits(params: RecipeParameters): bigint {
   return amountBaseUnits;
 }
 
+function normalizeErrorMessage(errorMessage: string): string {
+  return errorMessage.toLowerCase();
+}
+
+function isSimulationRateLimitError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  const hasHttp429 = /\b429\b/.test(normalized) && normalized.includes('too many requests');
+  return (
+    normalized.includes('request limit reached') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('-32011') ||
+    hasHttp429
+  );
+}
+
+function isUnauthorizedExecutorError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('unauthorizedexecutor');
+}
+
+function isUnauthorizedKeeperError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('unauthorizedkeeper');
+}
+
+function isSelectorNotAllowedError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('selectornotallowed');
+}
+
+function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
+  if (callData.length < 10) {
+    return '0x';
+  }
+  return callData.slice(0, 10) as `0x${string}`;
+}
+
+function maybeLogSelectorNotAllowedHint(
+  targetProtocol: `0x${string}`,
+  selectorHex: `0x${string}`,
+  recipeType: RecipeType
+) {
+  const hintKey = `${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
+  if (selectorNotAllowedHintsLogged.has(hintKey)) {
+    return;
+  }
+
+  const selectorLabel = RECIPE_SELECTOR_LABEL[recipeType] || selectorHex;
+  console.warn(
+    `[Cron Scheduler Action Required] Guardrail blocks selector ${selectorHex} (${selectorLabel}) for protocol=${targetProtocol}. ` +
+    `From RecipeGuardrail owner wallet ${CONTRACT_ADDRESSES.recipeGuardrail}, call setSelectorWhitelist(${targetProtocol}, ${selectorHex}, true).`
+  );
+  selectorNotAllowedHintsLogged.add(hintKey);
+}
+
+async function targetProtocolHasCode(targetProtocol: `0x${string}`): Promise<boolean> {
+  const now = Date.now();
+  const cached = protocolCodeCache.get(targetProtocol);
+  if (cached && now - cached.checkedAtMs < PROTOCOL_CODE_CACHE_TTL_MS) {
+    return cached.hasCode;
+  }
+
+  const bytecode = await publicClient.getBytecode({ address: targetProtocol });
+  const hasCode = Boolean(bytecode && bytecode !== '0x');
+  protocolCodeCache.set(targetProtocol, { hasCode, checkedAtMs: now });
+  return hasCode;
+}
+
+async function isSelectorAllowedForProtocol(
+  targetProtocol: `0x${string}`,
+  selectorHex: `0x${string}`
+): Promise<boolean> {
+  const cacheKey = `${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
+  const now = Date.now();
+  const cached = selectorAllowedCache.get(cacheKey);
+  if (cached && now - cached.checkedAtMs < SELECTOR_ALLOW_CACHE_TTL_MS) {
+    return cached.isAllowed;
+  }
+
+  const isAllowed = (await publicClient.readContract({
+    address: CONTRACT_ADDRESSES.recipeGuardrail,
+    abi: RECIPE_GUARDRAIL_ABI,
+    functionName: 'isSelectorAllowed',
+    args: [targetProtocol, selectorHex],
+  })) as boolean;
+
+  selectorAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
+  return isAllowed;
+}
+
 /**
  * Periodically queries active recipes in Prisma DB, evaluates trigger conditions,
  * runs pre-flight eth_call static simulation, and enqueues jobs to BullMQ.
  */
 export async function pollAndTriggerActiveRecipes() {
   try {
+    const nowMs = Date.now();
+    if (nowMs < simulationBackoffUntilMs) {
+      if (nowMs - lastSimulationBackoffNoticeMs > 10_000) {
+        const remainingSeconds = Math.ceil((simulationBackoffUntilMs - nowMs) / 1000);
+        console.warn(`[Cron Scheduler Notice] Arc RPC is rate-limited. Backing off simulation calls for ${remainingSeconds}s.`);
+        lastSimulationBackoffNoticeMs = nowMs;
+      }
+      return;
+    }
+
     const activeRecipes = await prisma.activeRecipe.findMany({
       where: { status: RecipeStatus.ACTIVE },
     });
@@ -145,6 +264,18 @@ export async function pollAndTriggerActiveRecipes() {
         let minAmountOut = '0';
         const targetProtocol = recipe.targetProtocol as `0x${string}`;
 
+        const hasTargetProtocolCode = await targetProtocolHasCode(targetProtocol);
+        if (!hasTargetProtocolCode) {
+          if (!protocolNoCodeWarned.has(targetProtocol)) {
+            console.warn(
+              `[Cron Scheduler Action Required] targetProtocol=${targetProtocol} has no bytecode on Arc Testnet. ` +
+              `Update this recipe to use a deployed protocol contract address.`
+            );
+            protocolNoCodeWarned.add(targetProtocol);
+          }
+          continue;
+        }
+
         if (recipe.recipeType === RecipeType.AUTO_COMPOUNDER) {
           callData = buildAutoCompounderCallData(recipe.userAddress as `0x${string}`);
           minAmountOut = '5000000'; // 5 USDC min output
@@ -166,6 +297,13 @@ export async function pollAndTriggerActiveRecipes() {
           minAmountOut = '100000000';
         }
 
+        const selectorHex = extractSelectorFromCallData(callData);
+        const isSelectorAllowed = await isSelectorAllowedForProtocol(targetProtocol, selectorHex);
+        if (!isSelectorAllowed) {
+          maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType);
+          continue;
+        }
+
         // Pre-flight static simulation via eth_call
         const simResult = await simulateRecipeStep({
           userAddress: recipe.userAddress as `0x${string}`,
@@ -177,6 +315,39 @@ export async function pollAndTriggerActiveRecipes() {
         });
 
         if (!simResult.success) {
+          const simulationError = simResult.errorMessage || 'Unknown simulation error';
+
+          if (isUnauthorizedExecutorError(simulationError) && !hasLoggedUnauthorizedExecutorHint) {
+            console.warn(
+              `[Cron Scheduler Action Required] SharedExecutorProxy is not authorized in SessionKeyRegistry. ` +
+              `From the SessionKeyRegistry owner wallet, call setExecutorAuthorization(${CONTRACT_ADDRESSES.sharedExecutorProxy}, true).`
+            );
+            hasLoggedUnauthorizedExecutorHint = true;
+          }
+
+          if (isUnauthorizedKeeperError(simulationError)) {
+            const keeperHintKey = `${recipe.userAddress.toLowerCase()}:${keeperAccount.address.toLowerCase()}`;
+            if (!unauthorizedKeeperHintsLogged.has(keeperHintKey)) {
+              console.warn(
+                `[Cron Scheduler Action Required] Keeper session key is not valid for this user. ` +
+                `From user ${recipe.userAddress}, call registerSessionKey(${keeperAccount.address}, validUntilUnixTimestamp, maxUsdcSpendLimitBaseUnits) on SessionKeyRegistry ${CONTRACT_ADDRESSES.sessionKeyRegistry}.`
+              );
+              unauthorizedKeeperHintsLogged.add(keeperHintKey);
+            }
+          }
+
+          if (isSelectorNotAllowedError(simulationError)) {
+            maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType);
+          }
+
+          if (isSimulationRateLimitError(simulationError)) {
+            simulationBackoffUntilMs = Date.now() + SIMULATION_RATE_LIMIT_BACKOFF_MS;
+            console.warn(
+              `[Cron Scheduler Notice] Arc RPC rate limit detected. Pausing new simulation calls for ` +
+              `${SIMULATION_RATE_LIMIT_BACKOFF_MS / 1000}s.`
+            );
+          }
+
           console.warn(`[Cron Scheduler Notice] Simulation failed ${context}: ${simResult.errorMessage}. Skipping enqueue.`);
           continue;
         }

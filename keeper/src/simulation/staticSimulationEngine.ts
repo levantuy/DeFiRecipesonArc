@@ -1,15 +1,35 @@
-import { createPublicClient, http, Address, Hex } from 'viem';
+import { createPublicClient, http, fallback, Address, Hex } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { RUNTIME_CONFIG } from '../config/runtime';
 
 // Public Viem client configured for Arc Testnet
+function buildArcRpcFallbackTransport() {
+  const urls = [RUNTIME_CONFIG.arcRpcUrl, ...RUNTIME_CONFIG.arcRpcFallbackUrls]
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0);
+
+  const uniqueUrls = Array.from(new Set(urls));
+  const transports = uniqueUrls.map((url) =>
+    http(url, {
+      timeout: RUNTIME_CONFIG.arcRpcTimeoutMs,
+      retryCount: RUNTIME_CONFIG.arcRpcRetryCount,
+    })
+  );
+
+  if (transports.length === 1) {
+    return transports[0];
+  }
+
+  return fallback(transports, {
+    rank: false,
+    retryCount: RUNTIME_CONFIG.arcRpcRetryCount,
+  });
+}
+
 export const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(ARC_TESTNET_CONFIG.rpcUrl, {
-    timeout: RUNTIME_CONFIG.arcRpcTimeoutMs,
-    retryCount: RUNTIME_CONFIG.arcRpcRetryCount,
-  }),
+  transport: buildArcRpcFallbackTransport(),
 });
 
 export interface SimulationRequest {

@@ -33,7 +33,12 @@ interface ActiveRecipeState {
   maxSlippageBps: number;
   maxUsdcSpendPerTx: string;
   validUntil: string;
-  txHash: `0x${string}`;
+  txHash: `0x${string}` | null;
+}
+
+interface DelegationSetupResult {
+  txHash: `0x${string}` | null;
+  alreadyValid: boolean;
 }
 
 function isAddress(value: string): value is `0x${string}` {
@@ -127,13 +132,80 @@ export default function Home() {
     if (!keeperSessionKeyAddress) {
       throw new Error(configErrorMessage);
     }
+    if (address.toLowerCase() === keeperSessionKeyAddress.toLowerCase()) {
+      throw new Error(
+        'Invalid NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS: it matches the connected user wallet. ' +
+        'Set this value to the off-chain keeper EOA address from keeper/.env (derived from KEEPER_PRIVATE_KEY).'
+      );
+    }
     if (chainId !== ARC_TESTNET_CHAIN_ID) {
       if (!switchChain) {
         throw new Error('Wallet does not support automatic network switching. Please switch to Arc Testnet (5042002).');
       }
       await switchChain({ chainId: ARC_TESTNET_CHAIN_ID });
     }
+    if (!publicClient) {
+      throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+    }
     return { connectedAddress: address, keeperSessionKeyAddress };
+  };
+
+  const ensureSessionKeyDelegation = async (
+    connectedAddress: `0x${string}`,
+    configuredKeeperSessionKeyAddress: `0x${string}`
+  ): Promise<DelegationSetupResult> => {
+    if (!publicClient) {
+      throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+    }
+
+    const isAlreadyValid = await publicClient.readContract({
+      address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+      abi: SESSION_KEY_REGISTRY_ABI,
+      functionName: 'isValidSessionKey',
+      args: [connectedAddress, configuredKeeperSessionKeyAddress],
+    });
+
+    if (isAlreadyValid) {
+      return {
+        txHash: null,
+        alreadyValid: true,
+      };
+    }
+
+    const validUntilMs = Date.now() + DEFAULT_SESSION_VALIDITY_MS;
+    const validUntilSeconds = BigInt(Math.floor(validUntilMs / 1000));
+    const maxUsdcSpendLimit = parseUnits(DEFAULT_MAX_USDC_SPEND_PER_TX, 6);
+
+    const txHash = await submitAndConfirm(
+      await sendContractWithRetry(
+        {
+          address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+          abi: SESSION_KEY_REGISTRY_ABI,
+          functionName: 'registerSessionKey',
+          args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
+          chainId: ARC_TESTNET_CHAIN_ID,
+        },
+        {
+          onRetry: (attempt, maxAttempts) => {
+            setFeedbackMessage(
+              `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
+            );
+          },
+        }
+      ),
+      {
+        onRetry: (attempt, maxAttempts) => {
+          setFeedbackMessage(
+            `Transaction submitted. Waiting for confirmation (${attempt}/${maxAttempts - 1})...`
+          );
+        },
+      }
+    );
+
+    return {
+      txHash,
+      alreadyValid: false,
+    };
   };
 
   const enforceActionCooldown = () => {
@@ -210,34 +282,10 @@ export default function Home() {
       enforceActionCooldown();
       const { connectedAddress, keeperSessionKeyAddress: configuredKeeperSessionKeyAddress } = await ensureWalletReady();
       const selectedRecipeSnapshot = selectedRecipe;
-      const validUntilMs = Date.now() + DEFAULT_SESSION_VALIDITY_MS;
-      const validUntil = new Date(validUntilMs).toISOString();
-      const validUntilSeconds = BigInt(Math.floor(validUntilMs / 1000));
-      const maxUsdcSpendLimit = parseUnits(DEFAULT_MAX_USDC_SPEND_PER_TX, 6);
-      const txHash = await submitAndConfirm(
-        await sendContractWithRetry(
-          {
-            address: CONTRACT_ADDRESSES.sessionKeyRegistry,
-            abi: SESSION_KEY_REGISTRY_ABI,
-            functionName: 'registerSessionKey',
-            args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
-            chainId: ARC_TESTNET_CHAIN_ID,
-          },
-          {
-            onRetry: (attempt, maxAttempts) => {
-              setFeedbackMessage(
-                `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
-              );
-            },
-          }
-        ),
-        {
-          onRetry: (attempt, maxAttempts) => {
-            setFeedbackMessage(
-              `Transaction submitted. Waiting for confirmation (${attempt}/${maxAttempts - 1})...`
-            );
-          },
-        }
+      const validUntil = new Date(Date.now() + DEFAULT_SESSION_VALIDITY_MS).toISOString();
+      const delegationResult = await ensureSessionKeyDelegation(
+        connectedAddress,
+        configuredKeeperSessionKeyAddress
       );
 
       const selectedRecipeDefinition = RECIPES.find((recipe) => recipe.id === selectedRecipeSnapshot.id);
@@ -273,12 +321,16 @@ export default function Home() {
           maxSlippageBps,
           maxUsdcSpendPerTx: `${DEFAULT_MAX_USDC_SPEND_PER_TX} USDC`,
           validUntil,
-          txHash,
+          txHash: delegationResult.txHash,
         },
       }));
 
+      const delegationMessage = delegationResult.alreadyValid
+        ? 'Delegation already valid for this wallet. '
+        : `Delegation registered on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash} `;
+
       setFeedbackMessage(
-        `${selectedRecipeSnapshot.name} activated on-chain (confirmed). Delegation scoped to SharedExecutorProxy. View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
+        `${selectedRecipeSnapshot.name} activated. ${delegationMessage}${keeperSyncWarning}`
       );
       setSelectedRecipe(null);
     } catch (error: unknown) {
@@ -509,7 +561,7 @@ export default function Home() {
                         Per-Tx Cap: <span className="font-mono text-slate-200">{lifecycle.maxUsdcSpendPerTx}</span>
                       </div>
                     ) : null}
-                    {lifecycle ? (
+                    {lifecycle?.txHash ? (
                       <a
                         href={`https://testnet.arcscan.app/tx/${lifecycle.txHash}`}
                         target="_blank"
@@ -518,6 +570,11 @@ export default function Home() {
                       >
                         {lifecycle.txHash}
                       </a>
+                    ) : null}
+                    {lifecycle && !lifecycle.txHash ? (
+                      <div className="text-xs text-emerald-300">
+                        Delegation already existed. No new registration tx needed.
+                      </div>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
