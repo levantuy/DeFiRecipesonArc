@@ -28,9 +28,15 @@ const PROTOCOL_CODE_CACHE_TTL_MS = 5 * 60 * 1000;
 const selectorAllowedCache = new Map<string, { isAllowed: boolean; checkedAtMs: number }>();
 const selectorNotAllowedHintsLogged = new Set<string>();
 const SELECTOR_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
+const protocolAllowedCache = new Map<string, { isAllowed: boolean; checkedAtMs: number }>();
+const protocolNotAllowedHintsLogged = new Set<string>();
+const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
+const executorNotApprovedHintsLogged = new Set<string>();
+const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
+const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
-  AUTO_COMPOUNDER: 'claimRewards() / 0x372500ab',
+  AUTO_COMPOUNDER: 'claimRewardsForUser(address)',
   RECURRING_DCA: 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
   SMART_YIELD_REBALANCER: 'withdrawForUser(address,uint256)',
 };
@@ -154,6 +160,11 @@ function isSelectorNotAllowedError(errorMessage: string): boolean {
   return normalized.includes('selectornotallowed');
 }
 
+function isExecutorNotApprovedError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('executor not approved');
+}
+
 function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
   if (callData.length < 10) {
     return '0x';
@@ -164,7 +175,8 @@ function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
 function maybeLogSelectorNotAllowedHint(
   targetProtocol: `0x${string}`,
   selectorHex: `0x${string}`,
-  recipeType: RecipeType
+  recipeType: RecipeType,
+  guardrailOwnerAddress: `0x${string}`
 ) {
   const hintKey = `${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
   if (selectorNotAllowedHintsLogged.has(hintKey)) {
@@ -174,9 +186,61 @@ function maybeLogSelectorNotAllowedHint(
   const selectorLabel = RECIPE_SELECTOR_LABEL[recipeType] || selectorHex;
   console.warn(
     `[Cron Scheduler Action Required] Guardrail blocks selector ${selectorHex} (${selectorLabel}) for protocol=${targetProtocol}. ` +
-    `From RecipeGuardrail owner wallet ${CONTRACT_ADDRESSES.recipeGuardrail}, call setSelectorWhitelist(${targetProtocol}, ${selectorHex}, true).`
+    `From RecipeGuardrail owner wallet ${guardrailOwnerAddress}, call setSelectorWhitelist(${targetProtocol}, ${selectorHex}, true).`
   );
   selectorNotAllowedHintsLogged.add(hintKey);
+}
+
+function maybeLogProtocolNotWhitelistedHint(targetProtocol: `0x${string}`, guardrailOwnerAddress: `0x${string}`) {
+  const hintKey = targetProtocol.toLowerCase();
+  if (protocolNotAllowedHintsLogged.has(hintKey)) {
+    return;
+  }
+
+  console.warn(
+    `[Cron Scheduler Action Required] Guardrail blocks protocol=${targetProtocol} because it is not whitelisted. ` +
+    `From RecipeGuardrail owner wallet ${guardrailOwnerAddress}, call setProtocolWhitelist(${targetProtocol}, true).`
+  );
+  protocolNotAllowedHintsLogged.add(hintKey);
+}
+
+function maybeLogExecutorNotApprovedHint(targetProtocol: `0x${string}`) {
+  const hintKey = targetProtocol.toLowerCase();
+  if (executorNotApprovedHintsLogged.has(hintKey)) {
+    return;
+  }
+
+  console.warn(
+    `[Cron Scheduler Action Required] targetProtocol=${targetProtocol} rejected execution because SharedExecutorProxy is not approved. ` +
+    `From target protocol owner wallet, call setExecutorApproval(${CONTRACT_ADDRESSES.sharedExecutorProxy}, true).`
+  );
+  executorNotApprovedHintsLogged.add(hintKey);
+}
+
+async function getGuardrailOwnerAddress(): Promise<`0x${string}`> {
+  const now = Date.now();
+  if (guardrailOwnerCache.owner && now - guardrailOwnerCache.checkedAtMs < GUARDRAIL_OWNER_CACHE_TTL_MS) {
+    return guardrailOwnerCache.owner;
+  }
+
+  const owner = (await publicClient.readContract({
+    address: CONTRACT_ADDRESSES.recipeGuardrail,
+    abi: [
+      {
+        type: 'function',
+        name: 'owner',
+        stateMutability: 'view',
+        inputs: [],
+        outputs: [{ name: '', type: 'address', internalType: 'address' }],
+      },
+    ],
+    functionName: 'owner',
+    args: [],
+  })) as `0x${string}`;
+
+  guardrailOwnerCache.owner = owner;
+  guardrailOwnerCache.checkedAtMs = now;
+  return owner;
 }
 
 async function targetProtocolHasCode(targetProtocol: `0x${string}`): Promise<boolean> {
@@ -211,6 +275,25 @@ async function isSelectorAllowedForProtocol(
   })) as boolean;
 
   selectorAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
+  return isAllowed;
+}
+
+async function isProtocolWhitelisted(targetProtocol: `0x${string}`): Promise<boolean> {
+  const cacheKey = targetProtocol.toLowerCase();
+  const now = Date.now();
+  const cached = protocolAllowedCache.get(cacheKey);
+  if (cached && now - cached.checkedAtMs < PROTOCOL_ALLOW_CACHE_TTL_MS) {
+    return cached.isAllowed;
+  }
+
+  const isAllowed = (await publicClient.readContract({
+    address: CONTRACT_ADDRESSES.recipeGuardrail,
+    abi: RECIPE_GUARDRAIL_ABI,
+    functionName: 'isProtocolWhitelisted',
+    args: [targetProtocol],
+  })) as boolean;
+
+  protocolAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
   return isAllowed;
 }
 
@@ -298,9 +381,17 @@ export async function pollAndTriggerActiveRecipes() {
         }
 
         const selectorHex = extractSelectorFromCallData(callData);
+        const guardrailOwnerAddress = await getGuardrailOwnerAddress();
+
+        const isProtocolAllowed = await isProtocolWhitelisted(targetProtocol);
+        if (!isProtocolAllowed) {
+          maybeLogProtocolNotWhitelistedHint(targetProtocol, guardrailOwnerAddress);
+          continue;
+        }
+
         const isSelectorAllowed = await isSelectorAllowedForProtocol(targetProtocol, selectorHex);
         if (!isSelectorAllowed) {
-          maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType);
+          maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType, guardrailOwnerAddress);
           continue;
         }
 
@@ -337,7 +428,12 @@ export async function pollAndTriggerActiveRecipes() {
           }
 
           if (isSelectorNotAllowedError(simulationError)) {
-            maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType);
+            const guardrailOwnerAddress = await getGuardrailOwnerAddress();
+            maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType, guardrailOwnerAddress);
+          }
+
+          if (isExecutorNotApprovedError(simulationError)) {
+            maybeLogExecutorNotApprovedHint(targetProtocol);
           }
 
           if (isSimulationRateLimitError(simulationError)) {

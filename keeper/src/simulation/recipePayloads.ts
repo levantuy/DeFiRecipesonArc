@@ -6,6 +6,7 @@ const LENDING_ABI = parseAbi([
   'function withdraw(uint256 amount)',
   'function withdrawForUser(address user, uint256 amount)',
   'function claimRewards()',
+  'function claimRewardsForUser(address user)',
 ]);
 
 const DEX_ROUTER_ABI = parseAbi([
@@ -18,8 +19,8 @@ const DEX_ROUTER_ABI = parseAbi([
 export function buildAutoCompounderCallData(userAddress: Address): Hex {
   return encodeFunctionData({
     abi: LENDING_ABI,
-    functionName: 'claimRewards',
-    args: [],
+    functionName: 'claimRewardsForUser',
+    args: [userAddress],
   });
 }
 

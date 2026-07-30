@@ -12,7 +12,7 @@ export const RECIPES: (RecipeConfig & { description: string; risk: string; apy: 
     name: 'USDC Yield Auto-Compounder',
     description: 'Deposits USDC into Arc Lending, claims accrued rewards weekly, swaps to USDC via Arc DEX, and re-deposits for maximum yield.',
     targetProtocol: 'Arc Lending Protocol',
-    targetProtocolAddress: '0x35a2Ed2E24934deEf9Da172c49B867Fd9C46b009',
+    targetProtocolAddress: '0xc97F7631461B2aF7e62C8d49116e58D01DEf7B16',
     maxSlippageBps: 50, // 0.5%
     estimatedGasUsdc: '0.0025',
     expectedNetApy: '8.4%',
