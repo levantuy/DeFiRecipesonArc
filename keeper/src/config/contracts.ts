@@ -14,6 +14,8 @@ export const CONTRACT_ADDRESSES = {
     '0xcf0dc13ab3d1efd2eac8baf47639f45b205ad824') as `0x${string}`,
   sharedExecutorProxy: (process.env.SHARED_EXECUTOR_PROXY_ADDRESS ||
     '0xcbd2de404cb02c45b8688883e4321f887a6f2fc2') as `0x${string}`,
+  autoCompounderLendingBorrowing: (process.env.AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS ||
+    '0x6cB6eE2a33F497C1a682657f15A874dc675Fa773') as `0x${string}`,
 };
 
 export const SESSION_KEY_REGISTRY_ABI = [

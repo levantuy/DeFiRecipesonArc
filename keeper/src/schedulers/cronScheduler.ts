@@ -7,6 +7,7 @@ import {
   buildRebalancerCallData,
 } from '../simulation/recipePayloads';
 import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
+const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompounderLendingBorrowing;
 import { getKeeperAccount } from '../index';
 
 const prisma = new PrismaClient();
@@ -16,9 +17,15 @@ const DEFAULT_DCA_USDC_BASE_UNITS = 50_000_000n; // 50 USDC
 const MAX_USDC_SPEND_PER_TX_BASE_UNITS = 500_000_000n; // 500 USDC
 const MIN_CHECK_INTERVAL_HOURS = 1;
 const MAX_CHECK_INTERVAL_HOURS = 24 * 30;
-const SIMULATION_RATE_LIMIT_BACKOFF_MS = 45_000;
+const SIMULATION_RATE_LIMIT_BACKOFF_MS = 90_000;
+
+// Current deployed LendingBorrowing contract used by AUTO_COMPOUNDER on Arc Testnet.
+// Keep this explicit so an old recipe record cannot accidentally point the Keeper
+// at the previous LendingBorrowing deployment.
 
 let simulationBackoffUntilMs = 0;
+let isPolling = false;
+let cronRunning = false;
 let lastSimulationBackoffNoticeMs = 0;
 let hasLoggedUnauthorizedExecutorHint = false;
 const unauthorizedKeeperHintsLogged = new Set<string>();
@@ -34,6 +41,16 @@ const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
 const executorNotApprovedHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const AUTO_COMPOUNDER_REWARDS_ABI = [
+  {
+    type: 'function',
+    name: 'claimableRewards',
+    stateMutability: 'view',
+    inputs: [{ name: 'user', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+  },
+] as const;
 
 const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
   AUTO_COMPOUNDER: 'claimRewardsForUser(address)',
@@ -217,26 +234,55 @@ function maybeLogExecutorNotApprovedHint(targetProtocol: `0x${string}`) {
   executorNotApprovedHintsLogged.add(hintKey);
 }
 
+async function withRpcRateLimitHandling<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  const now = Date.now();
+
+  if (now < simulationBackoffUntilMs) {
+    const remainingSeconds = Math.ceil((simulationBackoffUntilMs - now) / 1000);
+    throw new Error(`Arc RPC rate-limit backoff active (${remainingSeconds}s remaining).`);
+  }
+
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (isSimulationRateLimitError(message)) {
+      simulationBackoffUntilMs = Date.now() + SIMULATION_RATE_LIMIT_BACKOFF_MS;
+      console.warn(
+        `[Cron Scheduler Notice] Arc RPC rate limit detected. ` +
+        `Backing off RPC reads/simulations for ${SIMULATION_RATE_LIMIT_BACKOFF_MS / 1000}s.`
+      );
+    }
+
+    throw error;
+  }
+}
+
 async function getGuardrailOwnerAddress(): Promise<`0x${string}`> {
   const now = Date.now();
   if (guardrailOwnerCache.owner && now - guardrailOwnerCache.checkedAtMs < GUARDRAIL_OWNER_CACHE_TTL_MS) {
     return guardrailOwnerCache.owner;
   }
 
-  const owner = (await publicClient.readContract({
-    address: CONTRACT_ADDRESSES.recipeGuardrail,
-    abi: [
-      {
-        type: 'function',
-        name: 'owner',
-        stateMutability: 'view',
-        inputs: [],
-        outputs: [{ name: '', type: 'address', internalType: 'address' }],
-      },
-    ],
-    functionName: 'owner',
-    args: [],
-  })) as `0x${string}`;
+  const owner = (await withRpcRateLimitHandling(() =>
+    publicClient.readContract({
+      address: CONTRACT_ADDRESSES.recipeGuardrail,
+      abi: [
+        {
+          type: 'function',
+          name: 'owner',
+          stateMutability: 'view',
+          inputs: [],
+          outputs: [{ name: '', type: 'address', internalType: 'address' }],
+        },
+      ],
+      functionName: 'owner',
+      args: [],
+    })
+  )) as `0x${string}`;
 
   guardrailOwnerCache.owner = owner;
   guardrailOwnerCache.checkedAtMs = now;
@@ -250,7 +296,9 @@ async function targetProtocolHasCode(targetProtocol: `0x${string}`): Promise<boo
     return cached.hasCode;
   }
 
-  const bytecode = await publicClient.getBytecode({ address: targetProtocol });
+  const bytecode = await withRpcRateLimitHandling(() =>
+    publicClient.getBytecode({ address: targetProtocol })
+  );
   const hasCode = Boolean(bytecode && bytecode !== '0x');
   protocolCodeCache.set(targetProtocol, { hasCode, checkedAtMs: now });
   return hasCode;
@@ -267,12 +315,14 @@ async function isSelectorAllowedForProtocol(
     return cached.isAllowed;
   }
 
-  const isAllowed = (await publicClient.readContract({
-    address: CONTRACT_ADDRESSES.recipeGuardrail,
-    abi: RECIPE_GUARDRAIL_ABI,
-    functionName: 'isSelectorAllowed',
-    args: [targetProtocol, selectorHex],
-  })) as boolean;
+  const isAllowed = (await withRpcRateLimitHandling(() =>
+    publicClient.readContract({
+      address: CONTRACT_ADDRESSES.recipeGuardrail,
+      abi: RECIPE_GUARDRAIL_ABI,
+      functionName: 'isSelectorAllowed',
+      args: [targetProtocol, selectorHex],
+    })
+  )) as boolean;
 
   selectorAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
   return isAllowed;
@@ -286,15 +336,31 @@ async function isProtocolWhitelisted(targetProtocol: `0x${string}`): Promise<boo
     return cached.isAllowed;
   }
 
-  const isAllowed = (await publicClient.readContract({
-    address: CONTRACT_ADDRESSES.recipeGuardrail,
-    abi: RECIPE_GUARDRAIL_ABI,
-    functionName: 'isProtocolWhitelisted',
-    args: [targetProtocol],
-  })) as boolean;
+  const isAllowed = (await withRpcRateLimitHandling(() =>
+    publicClient.readContract({
+      address: CONTRACT_ADDRESSES.recipeGuardrail,
+      abi: RECIPE_GUARDRAIL_ABI,
+      functionName: 'isProtocolWhitelisted',
+      args: [targetProtocol],
+    })
+  )) as boolean;
 
   protocolAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
   return isAllowed;
+}
+
+async function getClaimableRewards(
+  targetProtocol: `0x${string}`,
+  userAddress: `0x${string}`
+): Promise<bigint> {
+  return (await withRpcRateLimitHandling(() =>
+    publicClient.readContract({
+      address: targetProtocol,
+      abi: AUTO_COMPOUNDER_REWARDS_ABI,
+      functionName: 'claimableRewards',
+      args: [userAddress],
+    })
+  )) as bigint;
 }
 
 /**
@@ -302,6 +368,13 @@ async function isProtocolWhitelisted(targetProtocol: `0x${string}`): Promise<boo
  * runs pre-flight eth_call static simulation, and enqueues jobs to BullMQ.
  */
 export async function pollAndTriggerActiveRecipes() {
+  if (isPolling) {
+    console.log('[Cron Scheduler] Previous polling cycle is still running. Skipping this cycle.');
+    return;
+  }
+
+  isPolling = true;
+
   try {
     const nowMs = Date.now();
     if (nowMs < simulationBackoffUntilMs) {
@@ -345,7 +418,23 @@ export async function pollAndTriggerActiveRecipes() {
 
         let callData: `0x${string}` = '0x';
         let minAmountOut = '0';
-        const targetProtocol = recipe.targetProtocol as `0x${string}`;
+
+        // AUTO_COMPOUNDER always targets the current LendingBorrowing deployment.
+        // Other recipe types continue to use their configured targetProtocol.
+        const targetProtocol =
+          recipe.recipeType === RecipeType.AUTO_COMPOUNDER
+            ? AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS
+            : (recipe.targetProtocol as `0x${string}`);
+
+        if (
+          recipe.recipeType === RecipeType.AUTO_COMPOUNDER &&
+          recipe.targetProtocol.toLowerCase() !== AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS.toLowerCase()
+        ) {
+          console.warn(
+            `[Cron Scheduler Notice] AUTO_COMPOUNDER recipe ${context} uses an old targetProtocol=${recipe.targetProtocol}. ` +
+            `Using current LendingBorrowing=${AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS} for this execution.`
+          );
+        }
 
         const hasTargetProtocolCode = await targetProtocolHasCode(targetProtocol);
         if (!hasTargetProtocolCode) {
@@ -360,8 +449,27 @@ export async function pollAndTriggerActiveRecipes() {
         }
 
         if (recipe.recipeType === RecipeType.AUTO_COMPOUNDER) {
+          const claimableRewards = await getClaimableRewards(
+            targetProtocol,
+            recipe.userAddress as `0x${string}`
+          );
+
+          console.log(
+            `[Cron Scheduler] AUTO_COMPOUNDER claimableRewards ${context}: ${claimableRewards.toString()}`
+          );
+
+          if (claimableRewards <= 0n) {
+            console.log(
+              `[Cron Scheduler] No claimable rewards ${context}. ` +
+              `Skipping simulation and enqueue.`
+            );
+            continue;
+          }
+
           callData = buildAutoCompounderCallData(recipe.userAddress as `0x${string}`);
-          minAmountOut = '5000000'; // 5 USDC min output
+
+          // Reward claiming does not spend USDC. Keep delegated spend accounting at zero.
+          minAmountOut = '0';
         } else if (recipe.recipeType === RecipeType.RECURRING_DCA) {
           const dcaAmount = parseDcaAmountUsdcBaseUnits(recipeParams);
           const minAssetOut = (dcaAmount * 995n) / 1000n; // 0.5% slippage cap
@@ -436,6 +544,15 @@ export async function pollAndTriggerActiveRecipes() {
             maybeLogExecutorNotApprovedHint(targetProtocol);
           }
 
+          // Rewards can disappear between the pre-check and the simulation.
+          if (normalizeErrorMessage(simulationError).includes('no rewards')) {
+            console.log(
+              `[Cron Scheduler] Rewards became unavailable between pre-check and simulation ${context}. ` +
+              `Skipping enqueue.`
+            );
+            continue;
+          }
+
           if (isSimulationRateLimitError(simulationError)) {
             simulationBackoffUntilMs = Date.now() + SIMULATION_RATE_LIMIT_BACKOFF_MS;
             console.warn(
@@ -472,20 +589,52 @@ export async function pollAndTriggerActiveRecipes() {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown scheduler error';
     console.warn(`[Cron Scheduler Error] ${message}`);
+  } finally {
+    isPolling = false;
   }
 }
 
 let cronTimer: NodeJS.Timeout | null = null;
 
 export function startCronScheduler(intervalMs: number = 30_000) {
-  console.log(`[Cron Scheduler] Active recipe poll scheduler started (Interval: ${intervalMs / 1000}s)`);
-  pollAndTriggerActiveRecipes();
-  cronTimer = setInterval(pollAndTriggerActiveRecipes, intervalMs);
+  if (cronRunning) {
+    console.warn('[Cron Scheduler] Scheduler is already running.');
+    return;
+  }
+
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error('Cron scheduler intervalMs must be a positive number.');
+  }
+
+  cronRunning = true;
+
+  console.log(
+    `[Cron Scheduler] Active recipe poll scheduler started ` +
+    `(Interval: ${intervalMs / 1000}s)`
+  );
+
+  const scheduleNext = async () => {
+    if (!cronRunning) {
+      return;
+    }
+
+    try {
+      await pollAndTriggerActiveRecipes();
+    } finally {
+      if (cronRunning) {
+        cronTimer = setTimeout(scheduleNext, intervalMs);
+      }
+    }
+  };
+
+  void scheduleNext();
 }
 
 export function stopCronScheduler() {
+  cronRunning = false;
+
   if (cronTimer) {
-    clearInterval(cronTimer);
+    clearTimeout(cronTimer);
     cronTimer = null;
   }
 }
