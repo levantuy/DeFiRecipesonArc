@@ -3,7 +3,8 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { Wallet, ArrowUpRight, History, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useAccount } from 'wagmi';
+import { formatUnits } from 'viem';
+import { useAccount, useBalance } from 'wagmi';
 
 import { CONTRACT_ADDRESSES } from '../config/contracts';
 
@@ -88,6 +89,27 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
 
+function splitUsdDisplay(value: number, fractionDigits: number): { whole: string; fraction: string } {
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const [whole = '0', fraction = '00'] = normalized
+    .toLocaleString('en-US', {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })
+    .split('.');
+
+  return { whole, fraction };
+}
+
+function parseUsdcAmount(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 const PortfolioTrackerContent: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
@@ -98,6 +120,14 @@ const PortfolioTrackerContent: React.FC = () => {
     [searchParams]
   );
   const { address } = useAccount();
+  const { data: usdcBalanceData, isLoading: isLoadingUsdcBalance } = useBalance({
+    address,
+    token: CONTRACT_ADDRESSES.usdc,
+    query: {
+      enabled: Boolean(address),
+      refetchInterval: 15_000,
+    },
+  });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -274,6 +304,26 @@ const PortfolioTrackerContent: React.FC = () => {
     return auditLogs.filter((log) => activeStatuses.includes(log.status)).length;
   }, [auditLogs]);
 
+  const totalGasUsedUsdc = useMemo(() => {
+    return auditLogs.reduce((sum, log) => sum + parseUsdcAmount(log.gasUsedUsdc), 0);
+  }, [auditLogs]);
+
+  const totalUsdcBalance = useMemo(() => {
+    if (!usdcBalanceData) {
+      return null;
+    }
+    return Number(formatUnits(usdcBalanceData.value, usdcBalanceData.decimals));
+  }, [usdcBalanceData]);
+
+  const totalUsdcBalanceDisplay = useMemo(() => {
+    if (totalUsdcBalance === null) {
+      return { whole: '--', fraction: '--' };
+    }
+    return splitUsdDisplay(totalUsdcBalance, 2);
+  }, [totalUsdcBalance]);
+
+  const totalGasUsedDisplay = useMemo(() => splitUsdDisplay(totalGasUsedUsdc, 2), [totalGasUsedUsdc]);
+
   const applyCurrentAddressFilter = () => {
     if (userAddressValidationError) {
       return;
@@ -353,11 +403,11 @@ const PortfolioTrackerContent: React.FC = () => {
             <Wallet className="h-4 w-4 text-blue-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono mt-2">
-            $12,450.<span className="text-slate-400 text-xl">50</span>
+            ${totalUsdcBalanceDisplay.whole}.<span className="text-slate-400 text-xl">{totalUsdcBalanceDisplay.fraction}</span>
           </div>
           <div className="text-xs text-emerald-400 mt-1 flex items-center space-x-1">
             <ArrowUpRight className="h-3.5 w-3.5" />
-            <span>+8.4% APY Compounding Yield</span>
+            <span>{isLoadingUsdcBalance ? 'Refreshing wallet balance...' : address ? 'Live wallet USDC balance on Arc Testnet' : 'Connect wallet to load live USDC balance'}</span>
           </div>
         </div>
 
@@ -376,14 +426,14 @@ const PortfolioTrackerContent: React.FC = () => {
 
         <div className="glass-card p-5">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Cumulative Gas Saved</span>
+            <span>Cumulative Gas Used (USDC)</span>
             <CheckCircle className="h-4 w-4 text-purple-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono mt-2">
-            $42.<span className="text-slate-400 text-xl">18</span>
+            ${totalGasUsedDisplay.whole}.<span className="text-slate-400 text-xl">{totalGasUsedDisplay.fraction}</span>
           </div>
           <div className="text-xs text-purple-300 mt-1">
-            Arc Native USDC Sub-Second Finality
+            Summed from live execution logs (latest 50 entries)
           </div>
         </div>
       </div>
