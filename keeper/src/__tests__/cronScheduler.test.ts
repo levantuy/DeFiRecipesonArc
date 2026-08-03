@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeFunctionData } from 'viem';
 import { RecipeStatus, RecipeType } from '../db/types';
 import { RUNTIME_CONFIG } from '../config/runtime';
 
@@ -341,6 +342,60 @@ describe('Cron Scheduler Recipe Triggering', () => {
     expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the reverted contract address from simulation errors as an allowance check target', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0x7777777777777777777777777777777777777777',
+      callData: '0x12345678',
+      minSwapAssetOutBaseUnits: 49500000n,
+      spenderAddress: '0x8888888888888888888888888888888888888888',
+    });
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-reverted-contract-address',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+        if (spender === '0x1111111111111111111111111111111111111111') {
+          return 1000000n;
+        }
+        return 5000000n;
+      }
+
+      return true;
+    });
+
+    simulateRecipeStepMock.mockResolvedValue({
+      success: false,
+      errorMessage: 'execution reverted: ERC20: transfer amount exceeds allowance\nContract Call:\n  address:   0x1111111111111111111111111111111111111111\n  function:  executeRecipeStep(address user, address targetProtocol, bytes callData, uint256 minAmountOut)',
+    });
+
+    await pollAndTriggerActiveRecipes();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .map((call) => call.map((value) => String(value)).join(' '))
+      .filter((value) => value.includes('DCA allowance is lower than configured spend') || value.includes('DCA simulation reverted with allowance error'));
+
+    expect(allowanceWarnings.length).toBeGreaterThan(0);
+    expect(allowanceWarnings[0]).toContain('spender=0x1111111111111111111111111111111111111111');
+
+    warnSpy.mockRestore();
+  });
+
   it('logs DCA allowance warning once with explicit spender address', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -457,6 +512,112 @@ describe('Cron Scheduler Recipe Triggering', () => {
     expect(allowanceWarnings[0]).toContain('requiredBaseUnits=5000000');
 
     warnSpy.mockRestore();
+  });
+
+  it('infers the spender from the DCA calldata without misclassifying numeric calldata words', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+      callData:
+        '0x7ebc46f0' +
+        '0000000000000000000000003600000000000000000000000000000000000000' +
+        '000000000000000000000000c06ebbefd94032b85424d51906e2a335efae264b' +
+        '00000000000000000000000000000000000000000000000000000000000003e8',
+      minSwapAssetOutBaseUnits: 4950000n,
+    });
+
+    readContractMock
+      .mockResolvedValueOnce(5000000n) // USDC balance precheck
+      .mockResolvedValueOnce(1000000n) // allowance for inferred spender (c06e)
+      .mockResolvedValueOnce(5000000n) // allowance for shared executor proxy address
+      .mockResolvedValueOnce(5000000n); // allowance for target protocol address
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-embedded-spender',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      ) as string[];
+
+    expect(allowanceWarnings).toHaveLength(1);
+    expect(allowanceWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
+
+    warnSpy.mockRestore();
+  });
+
+  it('decodes DCA swap ABI parameters to expose candidate addresses from calldata', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const encodedCallData = encodeFunctionData({
+      abi: [
+        {
+          type: 'function',
+          name: 'swapExactTokensForTokens',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'amountIn', type: 'uint256' },
+            { name: 'amountOutMin', type: 'uint256' },
+            { name: 'path', type: 'address[]' },
+            { name: 'to', type: 'address' },
+            { name: 'deadline', type: 'uint256' },
+          ],
+          outputs: [{ name: '', type: 'uint256[]' }],
+        },
+      ],
+      functionName: 'swapExactTokensForTokens',
+      args: [
+        5_000_000n,
+        4_950_000n,
+        ['0x3600000000000000000000000000000000000000', '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF'],
+        '0x1111111111111111111111111111111111111111',
+        1_700_000_000_000n,
+      ],
+    });
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+      callData: encodedCallData,
+      minSwapAssetOutBaseUnits: 4950000n,
+    });
+
+    readContractMock
+      .mockResolvedValueOnce(5000000n) // USDC balance precheck
+      .mockResolvedValueOnce(5000000n) // USDC allowance precheck (runtime spender)
+      .mockResolvedValueOnce(5000000n); // USDC allowance precheck (shared executor)
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-abi-decoded-addresses',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    const logs = logSpy.mock.calls.flatMap((call) => call.map((value) => String(value))).join('\n');
+    expect(logs).toContain('decodedAbiAddresses=');
+    expect(logs).toContain('0x3600000000000000000000000000000000000000');
+    expect(logs).toContain('0xf0c4a4ce82a5746abaad9425360ab04fbba432bf');
+
+    logSpy.mockRestore();
   });
 
   it('infers DCA spender from callData selector when route response omits spenderAddress', async () => {

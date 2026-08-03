@@ -3,6 +3,7 @@ import { executionLogsRepository } from '../db/repositories/executionLogsReposit
 import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types';
 import type { Address } from 'viem';
 import { publicClient } from '../simulation/staticSimulationEngine';
+import { decodeFunctionData } from 'viem';
 import {
   ARC_APP_KIT_DCA_USDC_SPENDER,
   ARC_USDC_ADDRESS,
@@ -65,6 +66,21 @@ const ERC20_ALLOWANCE_ABI = [
 ] as const;
 
 const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+const DCA_SWAP_ABI = [
+  {
+    type: 'function',
+    name: 'swapExactTokensForTokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'uint256[]' }],
+  },
+] as const;
 const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
 
 function recipeLogContext(params: { userAddress: string; recipeType: RecipeType; recipeId?: string }): string {
@@ -470,6 +486,44 @@ function extractAddressWordFromCalldata(callData: `0x${string}`, wordIndex: numb
   return addressHex.toLowerCase() as `0x${string}`;
 }
 
+function getDcaDecodedSpenderCandidates(callData: `0x${string}`): `0x${string}`[] {
+  const fallbackCandidates = [
+    extractAddressWordFromCalldata(callData, 1),
+    extractAddressWordFromCalldata(callData, 3),
+  ].filter((value): value is `0x${string}` => Boolean(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000');
+
+  try {
+    const decoded = decodeFunctionData({
+      abi: DCA_SWAP_ABI,
+      data: callData,
+    });
+
+    if (decoded.functionName !== 'swapExactTokensForTokens') {
+      return Array.from(new Set(fallbackCandidates.map((candidate) => candidate.toLowerCase()))) as `0x${string}`[];
+    }
+
+    const [, , path, to] = decoded.args as [bigint, bigint, readonly `0x${string}`[], `0x${string}`, bigint];
+    const abiCandidates = [to, ...(Array.isArray(path) ? path : [])].filter(
+      (value): value is `0x${string}` => Boolean(value) && /^0x[a-fA-F0-9]{40}$/.test(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000'
+    );
+
+    const merged = Array.from(new Set([...abiCandidates, ...fallbackCandidates]));
+    return merged.map((candidate) => candidate.toLowerCase()) as `0x${string}`[];
+  } catch {
+    return Array.from(new Set(fallbackCandidates.map((candidate) => candidate.toLowerCase()))) as `0x${string}`[];
+  }
+}
+
+function normalizeDcaSpenderCandidates(candidates: `0x${string}`[]): `0x${string}`[] {
+  return Array.from(
+    new Set(
+      candidates
+        .filter((candidate) => candidate.toLowerCase() !== '0x0000000000000000000000000000000000000000')
+        .map((candidate) => candidate.toLowerCase())
+    )
+  ) as `0x${string}`[];
+}
+
 function resolveDcaAllowanceSpenderAddress(
   callData: `0x${string}`,
   targetProtocol: `0x${string}`,
@@ -480,9 +534,9 @@ function resolveDcaAllowanceSpenderAddress(
   }
 
   if (extractSelectorFromCallData(callData).toLowerCase() === DCA_SWAP_SELECTOR) {
-    const inferredSpender = extractAddressWordFromCalldata(callData, 1);
-    if (inferredSpender) {
-      return inferredSpender;
+    const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+    if (decodedSpenders.length > 0) {
+      return decodedSpenders[0] as `0x${string}`;
     }
   }
 
@@ -499,12 +553,9 @@ function getDcaAllowanceSpenderCandidates(
   routeSpenderAddress: `0x${string}` | undefined
 ): `0x${string}`[] {
   const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
-  return Array.from(
-    new Set([
-      runtimeSpender.toLowerCase(),
-      targetProtocol.toLowerCase(),
-      CONTRACT_ADDRESSES.sharedExecutorProxy.toLowerCase(),
-    ])
+  const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+  return normalizeDcaSpenderCandidates(
+    [runtimeSpender, ...decodedSpenders, targetProtocol, CONTRACT_ADDRESSES.sharedExecutorProxy]
   ).sort() as `0x${string}`[];
 }
 
@@ -576,6 +627,7 @@ export async function precheckDcaAllowance(
   }
 
   const currentAllowanceBaseUnits = allowanceBySpender[runtimeSpender.toLowerCase()] || '0';
+  const decodedSpenders = getDcaDecodedSpenderCandidates(routePlan.callData);
   const requiredForSchedulerBaseUnits = payload.perExecutionBaseUnits.toString();
   const requiredForActivationBaseUnits = payload.totalBudgetBaseUnits.toString();
   const isEnoughForScheduler = requiredSpenders.every((spender) => {
@@ -592,6 +644,7 @@ export async function precheckDcaAllowance(
     allowance: {
       userAddress: payload.userAddress,
       runtimeSpender,
+      decodedAbiAddresses: decodedSpenders,
       targetProtocolAddress: routePlan.targetProtocolAddress,
       callDataSelector: extractSelectorFromCallData(routePlan.callData),
       targetAssetSymbol: payload.targetAssetSymbol,

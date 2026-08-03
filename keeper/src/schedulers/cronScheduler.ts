@@ -1,5 +1,5 @@
 import { JsonObject, RecipeStatus, RecipeType } from '../db/types';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, decodeFunctionData, http } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
 import { publicClient, simulateRecipeStep } from '../simulation/staticSimulationEngine';
@@ -104,6 +104,21 @@ const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
 };
 
 const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+const DCA_SWAP_ABI = [
+  {
+    type: 'function',
+    name: 'swapExactTokensForTokens',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'uint256[]' }],
+  },
+] as const;
 
 interface RecipeParameters {
   checkIntervalHours?: number;
@@ -346,6 +361,53 @@ function extractAddressWordFromCalldata(callData: `0x${string}`, wordIndex: numb
   return addressHex.toLowerCase() as `0x${string}`;
 }
 
+function getDcaDecodedSpenderCandidates(callData: `0x${string}`): `0x${string}`[] {
+  const fallbackCandidates = [
+    extractAddressWordFromCalldata(callData, 1),
+    extractAddressWordFromCalldata(callData, 3),
+  ].filter((value): value is `0x${string}` => Boolean(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000');
+
+  try {
+    const decoded = decodeFunctionData({
+      abi: DCA_SWAP_ABI,
+      data: callData,
+    });
+
+    if (decoded.functionName !== 'swapExactTokensForTokens') {
+      return Array.from(new Set(fallbackCandidates.map((candidate) => candidate.toLowerCase()))) as `0x${string}`[];
+    }
+
+    const [, , path, to] = decoded.args as [bigint, bigint, readonly `0x${string}`[], `0x${string}`, bigint];
+    const abiCandidates = [to, ...(Array.isArray(path) ? path : [])].filter(
+      (value): value is `0x${string}` => Boolean(value) && /^0x[a-fA-F0-9]{40}$/.test(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000'
+    );
+
+    const merged = Array.from(new Set([...abiCandidates, ...fallbackCandidates]));
+    return merged.map((candidate) => candidate.toLowerCase()) as `0x${string}`[];
+  } catch {
+    return Array.from(new Set(fallbackCandidates.map((candidate) => candidate.toLowerCase()))) as `0x${string}`[];
+  }
+}
+
+function normalizeDcaSpenderCandidates(candidates: `0x${string}`[]): `0x${string}`[] {
+  return Array.from(
+    new Set(
+      candidates
+        .filter((candidate) => candidate.toLowerCase() !== '0x0000000000000000000000000000000000000000')
+        .map((candidate) => candidate.toLowerCase())
+    )
+  ) as `0x${string}`[];
+}
+
+function extractRevertedContractAddressFromSimulationError(errorMessage: string): `0x${string}` | null {
+  const match = errorMessage.match(/contract call:\s*address:\s*(0x[a-fA-F0-9]{40})/i);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].toLowerCase() as `0x${string}`;
+}
+
 function resolveDcaAllowanceSpenderAddress(
   callData: `0x${string}`,
   targetProtocol: `0x${string}`,
@@ -356,11 +418,11 @@ function resolveDcaAllowanceSpenderAddress(
   }
 
   // App Kit sometimes omits allowanceTarget/spender in response payload.
-  // For the known DCA selector shape, calldata word #1 is the spender-like contract address.
+  // For the known DCA selector shape, try the calldata-derived spender addresses in order.
   if (extractSelectorFromCallData(callData).toLowerCase() === DCA_SWAP_SELECTOR) {
-    const inferredSpender = extractAddressWordFromCalldata(callData, 1);
-    if (inferredSpender) {
-      return inferredSpender;
+    const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+    if (decodedSpenders.length > 0) {
+      return decodedSpenders[0] as `0x${string}`;
     }
   }
 
@@ -377,12 +439,9 @@ function getDcaAllowanceSpenderCandidates(
   routeSpenderAddress: `0x${string}` | null
 ): `0x${string}`[] {
   const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
-  return Array.from(
-    new Set([
-      runtimeSpender.toLowerCase(),
-      targetProtocol.toLowerCase(),
-      CONTRACT_ADDRESSES.sharedExecutorProxy.toLowerCase(),
-    ])
+  const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+  return normalizeDcaSpenderCandidates(
+    [runtimeSpender, ...decodedSpenders, targetProtocol, CONTRACT_ADDRESSES.sharedExecutorProxy]
   ).sort() as `0x${string}`[];
 }
 
@@ -984,10 +1043,23 @@ export async function pollAndTriggerActiveRecipes() {
             targetProtocol as `0x${string}`,
             routeSpenderAddress
           );
+          const selectorHex = extractSelectorFromCallData(callData);
+          const runtimeSpender = resolveDcaAllowanceSpenderAddress(
+            callData,
+            targetProtocol as `0x${string}`,
+            routeSpenderAddress
+          );
+          const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+          console.log(
+            `[Cron Scheduler Debug] DCA allowance precheck ${context} selector=${selectorHex} runtimeSpender=${runtimeSpender} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()} candidateSpenders=${spenderCandidates.join(',')} decodedAbiAddresses=${decodedSpenders.join(',') || 'none'}`
+          );
           const insufficient: Array<{ spender: `0x${string}`; allowance: bigint }> = [];
 
           for (const spender of spenderCandidates) {
             const currentAllowance = await getUsdcAllowance(recipe.userAddress as `0x${string}`, spender);
+            console.log(
+              `[Cron Scheduler Debug] DCA allowance detail ${context} spender=${spender} currentAllowanceBaseUnits=${currentAllowance?.toString() ?? 'null'} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}`
+            );
             if (currentAllowance !== null && currentAllowance < requiredUsdcAllowanceBaseUnits) {
               insufficient.push({ spender, allowance: currentAllowance });
             }
@@ -1102,7 +1174,7 @@ export async function pollAndTriggerActiveRecipes() {
           if (recipe.recipeType === RecipeType.RECURRING_DCA && isAllowanceExceededError(simulationError)) {
             const dcaStateForAllowance = parseDcaConfigStateStrict(recipe.parametersJson);
             const configuredDcaAmount = dcaStateForAllowance.perExecutionAmountBaseUnits.toString();
-            const allowanceTarget = resolveDcaAllowanceSpenderAddress(
+            const runtimeSpender = resolveDcaAllowanceSpenderAddress(
               callData,
               targetProtocol as `0x${string}`,
               routeSpenderAddress
@@ -1112,8 +1184,14 @@ export async function pollAndTriggerActiveRecipes() {
               targetProtocol as `0x${string}`,
               routeSpenderAddress
             );
+            const revertedContractAddress = extractRevertedContractAddressFromSimulationError(simulationError);
+            const simulationAllowanceCandidates = normalizeDcaSpenderCandidates(
+              revertedContractAddress
+                ? [...spenderCandidates, revertedContractAddress]
+                : spenderCandidates
+            );
             const allowanceDetails: Array<{ spender: `0x${string}`; allowance: bigint | null }> = [];
-            for (const spender of spenderCandidates) {
+            for (const spender of simulationAllowanceCandidates) {
               allowanceDetails.push({
                 spender,
                 allowance: await getUsdcAllowance(recipe.userAddress as `0x${string}`, spender),
@@ -1121,10 +1199,14 @@ export async function pollAndTriggerActiveRecipes() {
             }
 
             const requiredAmount = BigInt(configuredDcaAmount);
+            const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+            console.warn(
+              `[Cron Scheduler Debug] DCA simulation allowance failure ${context} selector=${selectorHex} requiredBaseUnits=${requiredAmount.toString()} runtimeSpender=${runtimeSpender} revertedContractAddress=${revertedContractAddress || 'none'} decodedAbiAddresses=${decodedSpenders.join(',') || 'none'}`
+            );
             const insufficient = allowanceDetails.filter(
               (entry) => entry.allowance !== null && entry.allowance < requiredAmount
             );
-            const hintKey = `${recipe.id}:${allowanceTarget}:${configuredDcaAmount}`;
+            const hintKey = `${recipe.id}:${runtimeSpender}:${configuredDcaAmount}`;
             if (!allowanceExceededHintsLogged.has(hintKey)) {
               if (insufficient.length > 0) {
                 const details = insufficient
