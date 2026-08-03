@@ -11,11 +11,19 @@ import {
   SESSION_KEY_REGISTRY_ABI,
   SHARED_EXECUTOR_PROXY_ABI,
 } from '@/config/contracts';
+import {
+  DcaExecutionMode,
+  estimateDcaRuns,
+  parseDcaActivationConfig,
+} from '@/lib/dcaConfig';
 import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 
 const DEFAULT_MAX_USDC_SPEND_PER_TX = '500';
+const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
+const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b' as const;
+const DCA_USDC_ALLOWANCE_SPENDERS = [DCA_USDC_SPENDER, DCA_USDC_PROXY_SPENDER] as const;
 const DEFAULT_SESSION_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
 const TX_SEND_MAX_RETRIES = 7;
 const TX_SEND_BASE_DELAY_MS = 1500;
@@ -51,6 +59,29 @@ interface FrontendPerformanceMetrics {
   timeToSubmittedMs: number[];
   timeToConfirmedMs: number[];
 }
+
+const ERC20_ALLOWANCE_AND_APPROVE_ABI = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address', internalType: 'address' },
+      { name: 'spender', type: 'address', internalType: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address', internalType: 'address' },
+      { name: 'amount', type: 'uint256', internalType: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
+  },
+] as const;
 
 function isAddress(value: string): value is `0x${string}` {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -363,7 +394,93 @@ export default function Home() {
     throw lastError instanceof Error ? lastError : new Error('Transaction submission failed.');
   };
 
-  const handleConfirmSimulation = async ({ maxSlippageBps }: { maxSlippageBps: number }) => {
+  const ensureDcaUsdcAllowance = async (
+    connectedAddress: `0x${string}`,
+    requiredAllowanceBaseUnits: bigint,
+    executionMode: DcaExecutionMode
+  ): Promise<void> => {
+    if (!publicClient) {
+      throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+    }
+
+    for (const spender of DCA_USDC_ALLOWANCE_SPENDERS) {
+      const currentAllowance = await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.usdc,
+        abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
+        functionName: 'allowance',
+        args: [connectedAddress, spender],
+      });
+
+      if (currentAllowance >= requiredAllowanceBaseUnits) {
+        continue;
+      }
+
+      setFeedbackMessage(
+        `USDC allowance is below required DCA ${executionMode === 'PREFUND' ? 'prefund' : 'pull'} budget. ` +
+        `Approving spender ${spender} for ${requiredAllowanceBaseUnits.toString()} base units...`
+      );
+
+      const submittedAtMs = Date.now();
+      const approveTxHash = await sendContractWithRetry(
+        {
+          address: CONTRACT_ADDRESSES.usdc,
+          abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
+          functionName: 'approve',
+          args: [spender, requiredAllowanceBaseUnits],
+          chainId: ARC_TESTNET_CHAIN_ID,
+        },
+        {
+          onRetry: (attempt, maxAttempts) => {
+            setFeedbackMessage(`Arc RPC is busy. Retrying USDC approve submission (${attempt}/${maxAttempts - 1})...`);
+          },
+        }
+      );
+
+      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
+
+      const approvedInTime = await waitForReceiptWithTimeout(approveTxHash, TX_CONFIRM_TIMEOUT_MS, {
+        onRateLimitRetry: (attempt) => {
+          setFeedbackMessage(`Approve submitted. Network busy while confirming approve (retry #${attempt})...`);
+        },
+      });
+
+      const refreshedAllowance = await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.usdc,
+        abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
+        functionName: 'allowance',
+        args: [connectedAddress, spender],
+      });
+
+      if (refreshedAllowance < requiredAllowanceBaseUnits) {
+        throw new Error(
+          `USDC approve is not confirmed yet. Scheduler will continue to skip enqueue until allowance reaches ` +
+          `${requiredAllowanceBaseUnits.toString()} base units for spender ${spender}.`
+        );
+      }
+
+      if (approvedInTime) {
+        setFeedbackMessage(
+          `USDC approve confirmed for spender ${spender}. Continuing recipe activation...`
+        );
+      } else {
+        setFeedbackMessage(
+          `USDC approve propagated in allowance state for spender ${spender}. Continuing recipe activation...`
+        );
+      }
+    }
+  };
+
+  const handleConfirmSimulation = async ({
+    maxSlippageBps,
+    dcaConfig,
+  }: {
+    maxSlippageBps: number;
+    dcaConfig?: {
+      totalDcaBudgetUsdc: string;
+      perExecutionUsdc: string;
+      executionMode: DcaExecutionMode;
+    };
+  }) => {
     if (!selectedRecipe || isActivating) return;
 
     setIsActivating(true);
@@ -373,6 +490,46 @@ export default function Home() {
       const { connectedAddress, keeperSessionKeyAddress: configuredKeeperSessionKeyAddress } = await ensureWalletReady();
       const selectedRecipeSnapshot = selectedRecipe;
       const validUntil = new Date(Date.now() + DEFAULT_SESSION_VALIDITY_MS).toISOString();
+
+      let normalizedDcaPayload:
+        | {
+            totalDcaBudgetUsdc: string;
+            perExecutionUsdc: string;
+            executionMode: DcaExecutionMode;
+            totalDcaBudgetBaseUnits: bigint;
+            perExecutionBaseUnits: bigint;
+          }
+        | undefined = undefined;
+
+      if (selectedRecipeSnapshot.recipeType === 'RECURRING_DCA') {
+        if (!dcaConfig) {
+          throw new Error('DCA configuration is required for recurring DCA recipe activation.');
+        }
+
+        const parsedDcaConfig = parseDcaActivationConfig(dcaConfig);
+        const runs = estimateDcaRuns(
+          parsedDcaConfig.totalDcaBudgetBaseUnits,
+          parsedDcaConfig.perExecutionBaseUnits
+        );
+        if (runs <= 0n) {
+          throw new Error('Estimated runs must be at least 1 for DCA activation.');
+        }
+
+        await ensureDcaUsdcAllowance(
+          connectedAddress,
+          parsedDcaConfig.totalDcaBudgetBaseUnits,
+          parsedDcaConfig.executionMode
+        );
+
+        normalizedDcaPayload = {
+          totalDcaBudgetUsdc: dcaConfig.totalDcaBudgetUsdc.trim(),
+          perExecutionUsdc: dcaConfig.perExecutionUsdc.trim(),
+          executionMode: parsedDcaConfig.executionMode,
+          totalDcaBudgetBaseUnits: parsedDcaConfig.totalDcaBudgetBaseUnits,
+          perExecutionBaseUnits: parsedDcaConfig.perExecutionBaseUnits,
+        };
+      }
+
       const delegationResult = await ensureSessionKeyDelegation(
         connectedAddress,
         configuredKeeperSessionKeyAddress
@@ -397,6 +554,20 @@ export default function Home() {
         parametersJson: {
           checkIntervalHours,
           maxSlippageBps,
+          ...(selectedRecipeSnapshot.recipeType === 'RECURRING_DCA' && normalizedDcaPayload
+            ? {
+                totalBudgetUsdc: normalizedDcaPayload.totalDcaBudgetUsdc,
+                totalBudgetBaseUnits: normalizedDcaPayload.totalDcaBudgetBaseUnits.toString(),
+                perExecutionAmountUsdc: normalizedDcaPayload.perExecutionUsdc,
+                perExecutionAmountBaseUnits: normalizedDcaPayload.perExecutionBaseUnits.toString(),
+                spentAmountBaseUnits: '0',
+                executedCount: 0,
+                mode: normalizedDcaPayload.executionMode,
+                status: 'ACTIVE',
+                dcaAmountUsdc: normalizedDcaPayload.perExecutionUsdc,
+                dcaAmountUsdcBaseUnits: normalizedDcaPayload.perExecutionBaseUnits.toString(),
+              }
+            : {}),
           ...(selectedRecipeSnapshot.targetAssetSymbol
             ? { targetAssetSymbol: selectedRecipeSnapshot.targetAssetSymbol }
             : {}),
@@ -422,8 +593,14 @@ export default function Home() {
         ? 'Delegation already valid for this wallet. '
         : `Delegation submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash} `;
 
+      const dcaMessage =
+        selectedRecipeSnapshot.recipeType === 'RECURRING_DCA' && normalizedDcaPayload
+          ? `DCA configured with total budget ${normalizedDcaPayload.totalDcaBudgetUsdc} USDC, ` +
+            `${normalizedDcaPayload.perExecutionUsdc} USDC per run, mode ${normalizedDcaPayload.executionMode === 'PREFUND' ? 'PREFUND' : 'PULL_PER_RUN'}. `
+          : '';
+
       setFeedbackMessage(
-        `${selectedRecipeSnapshot.name} activated. ${delegationMessage}`
+        `${selectedRecipeSnapshot.name} activated. ${dcaMessage}${delegationMessage}`
       );
 
       if (delegationResult.txHash && delegationResult.submittedAtMs) {

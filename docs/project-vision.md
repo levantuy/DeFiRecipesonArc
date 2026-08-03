@@ -67,9 +67,9 @@ To deliver immediate value with maximum security, MVP development centers on **5
 * **Workflow:** Deposit USDC into Arc Lending → Monitor accrued rewards → Weekly claim rewards → Swap rewards to USDC via Arc App Kit Swap routes → Re-deposit into Arc Lending.
 * **Risk Level:** Low.
 
-### Recipe 2: USDC -> cirBTC Recurring DCA (Dollar-Cost Averaging)
+### Recipe 2: USDC -> EURC Recurring DCA (Dollar-Cost Averaging)
 * **Goal:** Automated periodic asset accumulation.
-* **Workflow:** Hold USDC in user wallet → Trigger weekly/monthly → Swap pre-set USDC amount to cirBTC via Arc App Kit Swap routes with slippage limits → Transfer acquired cirBTC back to user wallet.
+* **Workflow:** Hold USDC in user wallet → Trigger weekly/monthly → Swap pre-set USDC amount to EURC via Arc App Kit Swap routes with slippage limits → Transfer acquired EURC back to user wallet.
 * **Risk Level:** Low-Medium.
 
 ### Recipe 3: USDC Smart Yield Rebalancer

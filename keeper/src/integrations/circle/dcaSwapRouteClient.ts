@@ -11,6 +11,7 @@ export interface DcaSwapExecutionPlan {
   targetProtocolAddress: `0x${string}`;
   callData: `0x${string}`;
   minSwapAssetOutBaseUnits: bigint;
+  spenderAddress?: `0x${string}`;
 }
 
 export interface DcaSwapRouteClient {
@@ -146,6 +147,57 @@ function extractMinOutFromResponse(payload: unknown): bigint | null {
   return null;
 }
 
+function extractSpenderAddressFromResponse(payload: unknown): `0x${string}` | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const directCandidates: unknown[] = [
+    payload.spender,
+    payload.spenderAddress,
+    payload.allowanceTarget,
+    payload.approvalAddress,
+    payload.tokenTransferProxy,
+    isRecord(payload.quote) ? payload.quote.spender : undefined,
+    isRecord(payload.quote) ? payload.quote.allowanceTarget : undefined,
+    isRecord(payload.route) ? payload.route.spender : undefined,
+    isRecord(payload.route) ? payload.route.allowanceTarget : undefined,
+    isRecord(payload.transaction) ? payload.transaction.spender : undefined,
+    isRecord(payload.transaction) ? payload.transaction.allowanceTarget : undefined,
+  ];
+
+  for (const candidate of directCandidates) {
+    const normalized = normalizeHexAddress(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const queue: unknown[] = [payload];
+  let scanned = 0;
+
+  while (queue.length > 0 && scanned < 100) {
+    scanned += 1;
+    const current = queue.shift();
+    if (!isRecord(current)) {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(current)) {
+      const normalized = normalizeHexAddress(value);
+      if (normalized && /(spender|allowance|approval|proxy)/i.test(key)) {
+        return normalized;
+      }
+
+      if (isRecord(value) || Array.isArray(value)) {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
+}
+
 function fallbackMinOutFromInput(amountInBaseUnits: bigint, maxSlippageBps: number): bigint {
   return (amountInBaseUnits * BigInt(10_000 - maxSlippageBps)) / 10_000n;
 }
@@ -220,11 +272,13 @@ class AppKitDcaSwapRouteClient implements DcaSwapRouteClient {
     const minSwapAssetOutBaseUnits =
       extractMinOutFromResponse(response) ??
       fallbackMinOutFromInput(request.amountInBaseUnits, request.maxSlippageBps);
+    const spenderAddress = extractSpenderAddressFromResponse(response) ?? undefined;
 
     return {
       targetProtocolAddress: transaction.to,
       callData: transaction.data,
       minSwapAssetOutBaseUnits,
+      spenderAddress,
     };
   }
 }

@@ -3,6 +3,7 @@ const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const ARC_USDC_ADDRESS = '0x3600000000000000000000000000000000000000' as const;
 export const ARC_EURC_ADDRESS = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as const;
 export const ARC_CIRBTC_ADDRESS = '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as const;
+export const ARC_APP_KIT_DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
 
 export const ARC_TESTNET_SUPPORTED_TOKENS = ['USDC', 'EURC', 'cirBTC'] as const;
 export type ArcTestnetTokenSymbol = (typeof ARC_TESTNET_SUPPORTED_TOKENS)[number];
@@ -13,7 +14,7 @@ const ARC_TESTNET_TOKEN_BY_NORMALIZED_SYMBOL: Record<string, ArcTestnetTokenSymb
   cirbtc: 'cirBTC',
 };
 
-export const DEFAULT_DCA_TARGET_ASSET_SYMBOL: ArcTestnetTokenSymbol = 'cirBTC';
+export const DEFAULT_DCA_TARGET_ASSET_SYMBOL: ArcTestnetTokenSymbol = 'EURC';
 
 export const DEFAULT_DCA_MAX_SLIPPAGE_BPS = 100;
 export const MIN_DCA_SLIPPAGE_BPS = 10;

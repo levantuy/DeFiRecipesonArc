@@ -1,17 +1,15 @@
-import { RecipeStatus, RecipeType } from '../db/types';
+import { JsonObject, RecipeStatus, RecipeType } from '../db/types';
 import { createPublicClient, http } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
 import { publicClient, simulateRecipeStep } from '../simulation/staticSimulationEngine';
 import {
   buildAutoCompounderCallData,
-  buildDcaCallData,
   buildRebalancerCallData,
 } from '../simulation/recipePayloads';
 import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
 import {
-  ARC_CIRBTC_ADDRESS,
-  ARC_EURC_ADDRESS,
+  ARC_APP_KIT_DCA_USDC_SPENDER,
   ARC_USDC_ADDRESS,
   DEFAULT_DCA_MAX_SLIPPAGE_BPS,
   parseDcaMaxSlippageBpsWithFallback,
@@ -20,13 +18,15 @@ import {
 import { RUNTIME_CONFIG } from '../config/runtime';
 import { incrementCounter, readCounter, recordCronCycle } from '../observability/metrics';
 import { recipesRepository } from '../db/repositories/recipesRepository';
+import {
+  estimatedRuns,
+  parseDcaConfigStateStrict,
+  remainingBudgetBaseUnits,
+  toPersistedDcaParameters,
+} from '../domain/dcaConfig';
 const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompounderLendingBorrowing;
-import { getKeeperAccount } from '../index';
+import { getKeeperAccount, getKeeperWalletClient } from '../index';
 import { createDcaSwapRouteClientFromRuntime } from '../integrations/circle/dcaSwapRouteClient';
-const USDC_DECIMALS = 6n;
-const USDC_BASE = 10n ** USDC_DECIMALS;
-const DEFAULT_DCA_USDC_BASE_UNITS = 50_000_000n; // 50 USDC
-const MAX_USDC_SPEND_PER_TX_BASE_UNITS = 500_000_000n; // 500 USDC
 const MIN_CHECK_INTERVAL_HOURS = 1;
 const MAX_CHECK_INTERVAL_HOURS = 24 * 30;
 const SIMULATION_RATE_LIMIT_BACKOFF_MS = RUNTIME_CONFIG.schedulerSimulationBackoffMs;
@@ -51,11 +51,16 @@ const SELECTOR_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
 const protocolAllowedCache = new Map<string, { isAllowed: boolean; checkedAtMs: number }>();
 const protocolNotAllowedHintsLogged = new Set<string>();
 const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
+const appKitBypassHintsLogged = new Set<string>();
 const executorNotApprovedHintsLogged = new Set<string>();
+const allowanceExceededHintsLogged = new Set<string>();
+const allowancePrecheckHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAIMABLE_REWARDS_CACHE_TTL_MS = 30 * 1000;
 const claimableRewardsCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
+const USDC_ALLOWANCE_CACHE_TTL_MS = 30 * 1000;
+const usdcAllowanceCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
 const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
 
 const AUTO_COMPOUNDER_REWARDS_ABI = [
@@ -68,16 +73,39 @@ const AUTO_COMPOUNDER_REWARDS_ABI = [
   },
 ] as const;
 
+const ERC20_ALLOWANCE_ABI = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address', internalType: 'address' },
+      { name: 'spender', type: 'address', internalType: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+  },
+] as const;
+
+const ERC20_BALANCE_OF_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address', internalType: 'address' }],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+  },
+] as const;
+
 const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
   AUTO_COMPOUNDER: 'claimRewardsForUser(address)',
   RECURRING_DCA: 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
   SMART_YIELD_REBALANCER: 'withdrawForUser(address,uint256)',
 };
 
+const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+
 interface RecipeParameters {
   checkIntervalHours?: number;
-  dcaAmountUsdc?: string;
-  dcaAmountUsdcBaseUnits?: string;
   maxSlippageBps?: number;
   targetAssetSymbol?: string;
 }
@@ -96,14 +124,6 @@ function parseRecipeParameters(parametersJson: unknown): RecipeParameters {
 
   if (typeof raw.checkIntervalHours === 'number') {
     parsed.checkIntervalHours = raw.checkIntervalHours;
-  }
-
-  if (typeof raw.dcaAmountUsdc === 'string') {
-    parsed.dcaAmountUsdc = raw.dcaAmountUsdc;
-  }
-
-  if (typeof raw.dcaAmountUsdcBaseUnits === 'string') {
-    parsed.dcaAmountUsdcBaseUnits = raw.dcaAmountUsdcBaseUnits;
   }
 
   if (typeof raw.maxSlippageBps === 'number') {
@@ -128,27 +148,21 @@ function resolveDcaMaxSlippageBps(recipeParams: RecipeParameters, context: strin
   return slippageResult.maxSlippageBps;
 }
 
-function resolveDcaTargetAssetSymbol(recipeParams: RecipeParameters, context: string): string {
+function resolveDcaTargetAssetSymbol(
+  recipeParams: RecipeParameters,
+  context: string
+): { targetAssetSymbol: string; usedFallback: boolean } {
   const symbolResult = parseDcaTargetAssetSymbolWithFallback(recipeParams.targetAssetSymbol);
   if (symbolResult.usedFallback) {
     console.warn(
       `[Cron Scheduler Warning] Invalid or missing targetAssetSymbol ${context}. ` +
-      `Using fallback=cirBTC for Arc Testnet compatibility.`
+      `Using fallback=EURC for Arc Testnet compatibility.`
     );
   }
-  return symbolResult.targetAssetSymbol;
-}
-
-function resolveDcaTargetAssetAddress(targetAssetSymbol: string): `0x${string}` {
-  if (targetAssetSymbol === 'cirBTC') {
-    return ARC_CIRBTC_ADDRESS;
-  }
-
-  if (targetAssetSymbol === 'EURC') {
-    return ARC_EURC_ADDRESS;
-  }
-
-  throw new Error('RECURRING_DCA targetAssetSymbol cannot be USDC; use EURC or cirBTC.');
+  return {
+    targetAssetSymbol: symbolResult.targetAssetSymbol,
+    usedFallback: symbolResult.usedFallback,
+  };
 }
 
 function parseCheckIntervalHours(intervalHours?: number): number {
@@ -164,46 +178,20 @@ function parseCheckIntervalHours(intervalHours?: number): number {
   return value;
 }
 
-function parseDcaAmountUsdcBaseUnits(params: RecipeParameters): bigint {
-  const rawBaseUnits = params.dcaAmountUsdcBaseUnits?.trim();
-  if (rawBaseUnits) {
-    if (!/^\d+$/.test(rawBaseUnits)) {
-      throw new Error('dcaAmountUsdcBaseUnits must be a positive integer string in USDC base units.');
-    }
-    const amount = BigInt(rawBaseUnits);
-    if (amount <= 0n || amount > MAX_USDC_SPEND_PER_TX_BASE_UNITS) {
-      throw new Error('dcaAmountUsdcBaseUnits is outside allowed per-tx USDC spend limits.');
-    }
-    return amount;
+function toBigIntOrNull(value: unknown): bigint | null {
+  if (typeof value === 'bigint') {
+    return value;
   }
 
-  const rawUsdc = params.dcaAmountUsdc?.trim();
-  if (!rawUsdc) {
-    return DEFAULT_DCA_USDC_BASE_UNITS;
+  if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0) {
+    return BigInt(value);
   }
 
-  if (!/^\d+(\.\d{1,6})?$/.test(rawUsdc)) {
-    throw new Error('dcaAmountUsdc must be a numeric USDC amount with up to 6 decimals.');
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
   }
 
-  let amountBaseUnits: bigint;
-  if (rawUsdc.includes('.')) {
-    const [wholePartRaw, fractionalRaw] = rawUsdc.split('.');
-    const wholePart = BigInt(wholePartRaw);
-    const fractionalPadded = (fractionalRaw + '000000').slice(0, 6);
-    const fractionalPart = BigInt(fractionalPadded);
-    amountBaseUnits = wholePart * USDC_BASE + fractionalPart;
-  } else {
-    const whole = BigInt(rawUsdc);
-    // Backward compatibility: legacy records may already store 6-decimal base units.
-    amountBaseUnits = whole >= USDC_BASE ? whole : whole * USDC_BASE;
-  }
-
-  if (amountBaseUnits <= 0n || amountBaseUnits > MAX_USDC_SPEND_PER_TX_BASE_UNITS) {
-    throw new Error('dcaAmountUsdc is outside allowed per-tx USDC spend limits.');
-  }
-
-  return amountBaseUnits;
+  return null;
 }
 
 function normalizeErrorMessage(errorMessage: string): string {
@@ -320,6 +308,11 @@ function isExecutorNotApprovedError(errorMessage: string): boolean {
   return normalized.includes('executor not approved');
 }
 
+function isAllowanceExceededError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('transfer amount exceeds allowance');
+}
+
 function isArcAppKitNoRouteError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return (
@@ -333,6 +326,48 @@ function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
     return '0x';
   }
   return callData.slice(0, 10) as `0x${string}`;
+}
+
+function extractAddressWordFromCalldata(callData: `0x${string}`, wordIndex: number): `0x${string}` | null {
+  const data = callData.slice(2);
+  const start = 8 + wordIndex * 64;
+  const end = start + 64;
+  if (data.length < end) {
+    return null;
+  }
+
+  const word = data.slice(start, end);
+  const addressHex = `0x${word.slice(24)}`;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addressHex)) {
+    return null;
+  }
+
+  return addressHex.toLowerCase() as `0x${string}`;
+}
+
+function resolveDcaAllowanceSpenderAddress(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | null
+): `0x${string}` {
+  if (routeSpenderAddress) {
+    return routeSpenderAddress;
+  }
+
+  // App Kit sometimes omits allowanceTarget/spender in response payload.
+  // For the known DCA selector shape, calldata word #1 is the spender-like contract address.
+  if (extractSelectorFromCallData(callData).toLowerCase() === DCA_SWAP_SELECTOR) {
+    const inferredSpender = extractAddressWordFromCalldata(callData, 1);
+    if (inferredSpender) {
+      return inferredSpender;
+    }
+  }
+
+  if (targetProtocol && targetProtocol !== ARC_APP_KIT_DCA_USDC_SPENDER) {
+    return targetProtocol;
+  }
+
+  return ARC_APP_KIT_DCA_USDC_SPENDER;
 }
 
 function maybeLogSelectorNotAllowedHint(
@@ -354,7 +389,11 @@ function maybeLogSelectorNotAllowedHint(
   selectorNotAllowedHintsLogged.add(hintKey);
 }
 
-function maybeLogProtocolNotWhitelistedHint(targetProtocol: `0x${string}`, guardrailOwnerAddress: `0x${string}`) {
+function maybeLogProtocolNotWhitelistedHint(
+  targetProtocol: `0x${string}`,
+  selectorHex: `0x${string}`,
+  guardrailOwnerAddress: `0x${string}`
+) {
   const hintKey = targetProtocol.toLowerCase();
   if (protocolNotAllowedHintsLogged.has(hintKey)) {
     return;
@@ -362,9 +401,90 @@ function maybeLogProtocolNotWhitelistedHint(targetProtocol: `0x${string}`, guard
 
   console.warn(
     `[Cron Scheduler Action Required] Guardrail blocks protocol=${targetProtocol} because it is not whitelisted. ` +
-    `From RecipeGuardrail owner wallet ${guardrailOwnerAddress}, call setProtocolWhitelist(${targetProtocol}, true).`
+    `From RecipeGuardrail owner wallet ${guardrailOwnerAddress}, call setProtocolWhitelist(${targetProtocol}, true). ` +
+    `Then ensure selector ${selectorHex} is allowed via setSelectorWhitelist(${targetProtocol}, ${selectorHex}, true).`
   );
   protocolNotAllowedHintsLogged.add(hintKey);
+}
+
+function maybeLogAppKitGuardrailBypassHint(
+  targetProtocol: `0x${string}`,
+  selectorHex: `0x${string}`,
+  context: string
+) {
+  const hintKey = `${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
+  if (appKitBypassHintsLogged.has(hintKey)) {
+    return;
+  }
+
+  console.warn(
+    `[Cron Scheduler Warning] Guardrail bypass is enabled for App Kit DCA ${context}. ` +
+    `Keeper will auto-whitelist targetProtocol=${targetProtocol} selector=${selectorHex} when signer owns RecipeGuardrail.`
+  );
+  appKitBypassHintsLogged.add(hintKey);
+}
+
+async function autoWhitelistGuardrailForAppKitDca(
+  targetProtocol: `0x${string}`,
+  selectorHex: `0x${string}`,
+  guardrailOwnerAddress: `0x${string}`,
+  keeperAddress: `0x${string}`,
+  context: string
+): Promise<boolean> {
+  const isKeeperGuardrailOwner = guardrailOwnerAddress.toLowerCase() === keeperAddress.toLowerCase();
+  if (!isKeeperGuardrailOwner) {
+    console.warn(
+      `[Cron Scheduler Action Required] App Kit DCA auto-whitelist is enabled but keeper=${keeperAddress} is not RecipeGuardrail owner=${guardrailOwnerAddress} ${context}. ` +
+      `Use guardrail owner key for keeper, or whitelist manually: setProtocolWhitelist(${targetProtocol}, true) and setSelectorWhitelist(${targetProtocol}, ${selectorHex}, true).`
+    );
+    return false;
+  }
+
+  const walletClient = getKeeperWalletClient();
+  let changed = false;
+
+  const protocolAllowed = await isProtocolWhitelisted(targetProtocol);
+  if (!protocolAllowed) {
+    const txHash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: getKeeperAccount(),
+      address: CONTRACT_ADDRESSES.recipeGuardrail,
+      abi: RECIPE_GUARDRAIL_ABI,
+      functionName: 'setProtocolWhitelist',
+      args: [targetProtocol, true],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    changed = true;
+    console.log(
+      `[Cron Scheduler] Auto-whitelisted protocol=${targetProtocol} on RecipeGuardrail txHash=${txHash} ${context}`
+    );
+  }
+
+  const selectorAllowed = await isSelectorAllowedForProtocol(targetProtocol, selectorHex);
+  if (!selectorAllowed) {
+    const txHash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: getKeeperAccount(),
+      address: CONTRACT_ADDRESSES.recipeGuardrail,
+      abi: RECIPE_GUARDRAIL_ABI,
+      functionName: 'setSelectorWhitelist',
+      args: [targetProtocol, selectorHex, true],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    changed = true;
+    console.log(
+      `[Cron Scheduler] Auto-whitelisted selector=${selectorHex} for protocol=${targetProtocol} on RecipeGuardrail txHash=${txHash} ${context}`
+    );
+  }
+
+  if (changed) {
+    const protocolCacheKey = targetProtocol.toLowerCase();
+    const selectorCacheKey = `${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
+    protocolAllowedCache.set(protocolCacheKey, { isAllowed: true, checkedAtMs: Date.now() });
+    selectorAllowedCache.set(selectorCacheKey, { isAllowed: true, checkedAtMs: Date.now() });
+  }
+
+  return true;
 }
 
 function maybeLogExecutorNotApprovedHint(targetProtocol: `0x${string}`) {
@@ -530,6 +650,64 @@ async function getClaimableRewards(
   return amount;
 }
 
+async function getUsdcAllowance(
+  ownerAddress: `0x${string}`,
+  spenderAddress: `0x${string}`
+): Promise<bigint | null> {
+  const cacheKey = `${ownerAddress.toLowerCase()}:${spenderAddress.toLowerCase()}`;
+  const now = Date.now();
+  const cached = usdcAllowanceCache.get(cacheKey);
+  if (cached && now - cached.checkedAtMs < USDC_ALLOWANCE_CACHE_TTL_MS) {
+    return cached.amount;
+  }
+
+  const rawAllowance = await withRpcRateLimitHandling(() =>
+    withRpcReadFailover('getUsdcAllowance', async (client) =>
+      client.readContract({
+        address: ARC_USDC_ADDRESS,
+        abi: ERC20_ALLOWANCE_ABI,
+        functionName: 'allowance',
+        args: [ownerAddress, spenderAddress],
+      })
+    )
+  );
+
+  const amount = toBigIntOrNull(rawAllowance);
+  if (amount === null) {
+    console.warn(
+      `[Cron Scheduler Warning] Failed to parse USDC allowance owner=${ownerAddress} spender=${spenderAddress}. ` +
+      `Proceeding with simulation fallback checks.`
+    );
+    return null;
+  }
+
+  usdcAllowanceCache.set(cacheKey, { amount, checkedAtMs: now });
+  return amount;
+}
+
+async function getUsdcBalance(ownerAddress: `0x${string}`): Promise<bigint | null> {
+  const rawBalance = await withRpcRateLimitHandling(() =>
+    withRpcReadFailover('getUsdcBalance', async (client) =>
+      client.readContract({
+        address: ARC_USDC_ADDRESS,
+        abi: ERC20_BALANCE_OF_ABI,
+        functionName: 'balanceOf',
+        args: [ownerAddress],
+      })
+    )
+  );
+
+  const amount = toBigIntOrNull(rawBalance);
+  if (amount === null) {
+    console.warn(
+      `[Cron Scheduler Warning] Failed to parse USDC balance owner=${ownerAddress}. ` +
+      `Proceeding with simulation fallback checks.`
+    );
+  }
+
+  return amount;
+}
+
 /**
  * Periodically queries active recipes in PostgreSQL, evaluates trigger conditions,
  * runs pre-flight eth_call static simulation, and enqueues jobs to BullMQ.
@@ -585,9 +763,11 @@ export async function pollAndTriggerActiveRecipes() {
 
         let callData: `0x${string}` = '0x';
         let minAmountOut = '0';
+        let routeSpenderAddress: `0x${string}` | null = null;
+        let requiredUsdcAllowanceBaseUnits: bigint | null = null;
 
         // AUTO_COMPOUNDER always targets the current LendingBorrowing deployment.
-        // RECURRING_DCA may resolve runtime route execution target from App Kit.
+        // RECURRING_DCA always resolves route + execution target via dcaSwapRouteClient.
         // Other recipe types continue to use their configured targetProtocol.
         let targetProtocol =
           recipe.recipeType === RecipeType.AUTO_COMPOUNDER
@@ -627,67 +807,121 @@ export async function pollAndTriggerActiveRecipes() {
           // Reward claiming does not spend USDC. Keep delegated spend accounting at zero.
           minAmountOut = '0';
         } else if (recipe.recipeType === RecipeType.RECURRING_DCA) {
-          const dcaAmount = parseDcaAmountUsdcBaseUnits(recipeParams);
+          const dcaState = parseDcaConfigStateStrict(recipe.parametersJson);
+          const totalEstimatedRuns = estimatedRuns(dcaState);
+          const normalizedParameters = toPersistedDcaParameters(
+            (typeof recipe.parametersJson === 'object' && recipe.parametersJson !== null
+              ? (recipe.parametersJson as JsonObject)
+              : {}) as JsonObject,
+            dcaState
+          );
+
+          if (JSON.stringify(normalizedParameters) !== JSON.stringify(recipe.parametersJson)) {
+            await recipesRepository.updateParametersJson(recipe.id, normalizedParameters);
+          }
+
+          if (dcaState.status === 'COMPLETED' || dcaState.status === 'CANCELLED') {
+            continue;
+          }
+
+          const remainingBudget = remainingBudgetBaseUnits(dcaState);
+          console.log(
+            `[Cron Scheduler] DCA budget snapshot ${context} totalBudget=${dcaState.totalBudgetBaseUnits.toString()} ` +
+            `spent=${dcaState.spentAmountBaseUnits.toString()} remaining=${remainingBudget.toString()} estimatedRuns=${totalEstimatedRuns.toString()}`
+          );
+          if (remainingBudget < dcaState.perExecutionAmountBaseUnits) {
+            const completedState = { ...dcaState, status: 'COMPLETED' as const };
+            await recipesRepository.updateParametersJson(
+              recipe.id,
+              toPersistedDcaParameters(normalizedParameters as JsonObject, completedState)
+            );
+            console.info(
+              `[DCA_EVENT] DcaCompleted(user=${recipe.userAddress}, totalBudget=${dcaState.totalBudgetBaseUnits.toString()}, ` +
+              `spent=${dcaState.spentAmountBaseUnits.toString()}, remaining=${remainingBudget.toString()}) ${context}`
+            );
+            continue;
+          }
+
+          const dcaExecutionAmount = dcaState.perExecutionAmountBaseUnits;
           const maxSlippageBps = resolveDcaMaxSlippageBps(recipeParams, context);
-          const targetAssetSymbol = resolveDcaTargetAssetSymbol(recipeParams, context);
+          const {
+            targetAssetSymbol,
+            usedFallback: usedTargetAssetFallback,
+          } = resolveDcaTargetAssetSymbol(recipeParams, context);
 
-          if (recipe.swapProvider === 'ARC_APP_KIT_SWAP') {
+          const hasUnnormalizedTargetAsset = recipeParams.targetAssetSymbol !== targetAssetSymbol;
+          if (usedTargetAssetFallback || hasUnnormalizedTargetAsset) {
+            const currentParams =
+              typeof recipe.parametersJson === 'object' && recipe.parametersJson !== null
+                ? (recipe.parametersJson as JsonObject)
+                : {};
+
+            const normalizedParams: JsonObject = {
+              ...toPersistedDcaParameters(currentParams, dcaState),
+              targetAssetSymbol,
+            };
+
             try {
-              const routePlan = await dcaSwapRouteClient.resolveRoute({
-                recipientAddress: recipe.userAddress as `0x${string}`,
-                amountInBaseUnits: dcaAmount,
-                maxSlippageBps,
-                targetAssetSymbol,
-              });
-
-              targetProtocol = routePlan.targetProtocolAddress;
-              callData = routePlan.callData;
-            } catch (routeError: unknown) {
-              const routeErrorMessage = routeError instanceof Error ? routeError.message : String(routeError);
-
-              if (!isArcAppKitNoRouteError(routeErrorMessage)) {
-                throw routeError;
-              }
-
-              if (!targetProtocol) {
-                console.warn(
-                  `[Cron Scheduler Action Required] App Kit has no swap route ${context}. ` +
-                  `Register this DCA with a deployed DEX router targetProtocol fallback, reduce dcaAmountUsdc, ` +
-                  `or relax maxSlippageBps to widen route availability.`
-                );
-                continue;
-              }
-
-              const minAssetOut = (dcaAmount * BigInt(10_000 - maxSlippageBps)) / 10_000n;
-              const targetAssetAddress = resolveDcaTargetAssetAddress(targetAssetSymbol);
-              callData = buildDcaCallData(
-                dcaAmount,
-                minAssetOut,
-                ARC_USDC_ADDRESS,
-                targetAssetAddress,
-                recipe.userAddress as `0x${string}`
+              await recipesRepository.updateParametersJson(recipe.id, normalizedParams);
+              recipeParams.targetAssetSymbol = targetAssetSymbol;
+              console.log(
+                `[Cron Scheduler Notice] Persisted normalized targetAssetSymbol=${targetAssetSymbol} ${context}.`
               );
-
+            } catch (persistError: unknown) {
+              const persistErrorMessage = persistError instanceof Error ? persistError.message : String(persistError);
               console.warn(
-                `[Cron Scheduler Notice] App Kit reported no route ${context}. ` +
-                `Falling back to configured targetProtocol=${targetProtocol}.`
+                `[Cron Scheduler Warning] Failed to persist normalized targetAssetSymbol ${context}: ${persistErrorMessage}`
               );
             }
-          } else {
-            const minAssetOut = (dcaAmount * BigInt(10_000 - maxSlippageBps)) / 10_000n;
-            const targetAssetAddress = resolveDcaTargetAssetAddress(targetAssetSymbol);
-            callData = buildDcaCallData(
-              dcaAmount,
-              minAssetOut,
-              ARC_USDC_ADDRESS,
-              targetAssetAddress,
-              recipe.userAddress as `0x${string}`
+          }
+
+          if (recipe.swapProvider && recipe.swapProvider !== 'ARC_APP_KIT_SWAP') {
+            console.warn(
+              `[Cron Scheduler Warning] Unsupported swapProvider=${recipe.swapProvider} ${context}. ` +
+              `Proceeding with App Kit route resolution only.`
             );
           }
 
+          try {
+            const routePlan = await dcaSwapRouteClient.resolveRoute({
+              recipientAddress: recipe.userAddress as `0x${string}`,
+              amountInBaseUnits: dcaExecutionAmount,
+              maxSlippageBps,
+              targetAssetSymbol,
+            });
+
+            targetProtocol = routePlan.targetProtocolAddress;
+            callData = routePlan.callData;
+            routeSpenderAddress = routePlan.spenderAddress ?? null;
+          } catch (routeError: unknown) {
+            const routeErrorMessage = routeError instanceof Error ? routeError.message : String(routeError);
+
+            if (!isArcAppKitNoRouteError(routeErrorMessage)) {
+              throw routeError;
+            }
+
+            console.warn(
+              `[Cron Scheduler Action Required] App Kit has no swap route ${context}. ` +
+              `Reduce dcaAmountUsdc, relax maxSlippageBps, or choose another targetAssetSymbol.`
+            );
+            continue;
+          }
+
           // Keep spend accounting explicit: this value is consumed by SessionKeyRegistry via SharedExecutorProxy.
-          const delegatedUsdcSpendAmount = dcaAmount;
+          const delegatedUsdcSpendAmount = dcaExecutionAmount;
           minAmountOut = delegatedUsdcSpendAmount.toString();
+          requiredUsdcAllowanceBaseUnits = delegatedUsdcSpendAmount;
+
+          if (dcaState.mode === 'PULL') {
+            const currentUsdcBalance = await getUsdcBalance(recipe.userAddress as `0x${string}`);
+            if (currentUsdcBalance !== null && currentUsdcBalance < dcaExecutionAmount) {
+              console.warn(
+                `[Cron Scheduler Action Required] DCA pull mode skipped due to insufficient user USDC balance ${context}. ` +
+                `currentBalanceBaseUnits=${currentUsdcBalance.toString()} requiredBaseUnits=${dcaExecutionAmount.toString()}.`
+              );
+              continue;
+            }
+          }
         } else if (recipe.recipeType === RecipeType.SMART_YIELD_REBALANCER) {
           callData = buildRebalancerCallData(recipe.userAddress as `0x${string}`, 100000000n);
           minAmountOut = '100000000';
@@ -713,12 +947,72 @@ export async function pollAndTriggerActiveRecipes() {
           continue;
         }
 
+        if (recipe.recipeType === RecipeType.RECURRING_DCA && requiredUsdcAllowanceBaseUnits !== null) {
+          const dcaStateForAllowance = parseDcaConfigStateStrict(recipe.parametersJson);
+          if (dcaStateForAllowance.mode !== 'PULL') {
+            requiredUsdcAllowanceBaseUnits = null;
+          }
+        }
+
+        if (recipe.recipeType === RecipeType.RECURRING_DCA && requiredUsdcAllowanceBaseUnits !== null) {
+          const spenderForAllowance = resolveDcaAllowanceSpenderAddress(
+            callData,
+            targetProtocol as `0x${string}`,
+            routeSpenderAddress
+          );
+          const currentAllowance = await getUsdcAllowance(
+            recipe.userAddress as `0x${string}`,
+            spenderForAllowance
+          );
+
+          if (currentAllowance !== null && currentAllowance < requiredUsdcAllowanceBaseUnits) {
+            const configuredDcaAmount = requiredUsdcAllowanceBaseUnits.toString();
+            const hintKey = `${recipe.id}:${spenderForAllowance.toLowerCase()}:${configuredDcaAmount}`;
+
+            if (!allowancePrecheckHintsLogged.has(hintKey)) {
+              console.warn(
+                `[Cron Scheduler Action Required] DCA allowance is lower than configured spend ${context}. ` +
+                `Current configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
+                `spender=${spenderForAllowance.toLowerCase()} currentAllowanceBaseUnits=${currentAllowance.toString()} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}. ` +
+                `Increase user USDC allowance, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
+              );
+              allowancePrecheckHintsLogged.add(hintKey);
+            }
+
+            continue;
+          }
+        }
+
         const selectorHex = extractSelectorFromCallData(callData);
         const guardrailOwnerAddress = await getGuardrailOwnerAddress();
 
+        const isAppKitDcaRecipe =
+          recipe.recipeType === RecipeType.RECURRING_DCA && recipe.swapProvider === 'ARC_APP_KIT_SWAP';
+        const shouldBypassGuardrail =
+          isAppKitDcaRecipe && RUNTIME_CONFIG.allowAppKitDcaGuardrailBypass;
+
+        if (shouldBypassGuardrail) {
+          maybeLogAppKitGuardrailBypassHint(targetProtocol as `0x${string}`, selectorHex, context);
+
+          const autoWhitelistApplied = await autoWhitelistGuardrailForAppKitDca(
+            targetProtocol as `0x${string}`,
+            selectorHex,
+            guardrailOwnerAddress,
+            keeperAccount.address,
+            context
+          );
+          if (!autoWhitelistApplied) {
+            continue;
+          }
+        }
+
         const isProtocolAllowed = await isProtocolWhitelisted(targetProtocol as `0x${string}`);
         if (!isProtocolAllowed) {
-          maybeLogProtocolNotWhitelistedHint(targetProtocol as `0x${string}`, guardrailOwnerAddress);
+          maybeLogProtocolNotWhitelistedHint(
+            targetProtocol as `0x${string}`,
+            selectorHex,
+            guardrailOwnerAddress
+          );
           continue;
         }
 
@@ -774,6 +1068,24 @@ export async function pollAndTriggerActiveRecipes() {
             maybeLogExecutorNotApprovedHint(targetProtocol as `0x${string}`);
           }
 
+          if (recipe.recipeType === RecipeType.RECURRING_DCA && isAllowanceExceededError(simulationError)) {
+            const configuredDcaAmount = requiredUsdcAllowanceBaseUnits?.toString() || '0';
+            const allowanceTarget = resolveDcaAllowanceSpenderAddress(
+              callData,
+              targetProtocol as `0x${string}`,
+              routeSpenderAddress
+            ).toLowerCase();
+            const hintKey = `${recipe.id}:${allowanceTarget}:${configuredDcaAmount}`;
+            if (!allowanceExceededHintsLogged.has(hintKey)) {
+              console.warn(
+                `[Cron Scheduler Action Required] DCA allowance is lower than configured spend ${context}. ` +
+                `Current configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
+                `Increase user USDC allowance for spender=${allowanceTarget}, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
+              );
+              allowanceExceededHintsLogged.add(hintKey);
+            }
+          }
+
           // Rewards can disappear between the pre-check and the simulation.
           if (normalizeErrorMessage(simulationError).includes('no rewards')) {
             console.log(
@@ -809,6 +1121,12 @@ export async function pollAndTriggerActiveRecipes() {
           queueEnqueuedAtMs: Date.now(),
           preflightSimulationPassed: simResult.success,
           preflightEstimatedGasUsdc: simResult.estimatedGasUsdc?.toString(),
+          ...(recipe.recipeType === RecipeType.RECURRING_DCA
+            ? {
+                dcaMode: parseDcaConfigStateStrict(recipe.parametersJson).mode,
+                dcaExecutionAmountBaseUnits: minAmountOut,
+              }
+            : {}),
         };
 
         const executionBucket = Math.floor(now.getTime() / (intervalHours * 60 * 60 * 1000));
@@ -892,7 +1210,10 @@ export function __resetCronSchedulerStateForTests() {
   protocolAllowedCache.clear();
   protocolNotAllowedHintsLogged.clear();
   executorNotApprovedHintsLogged.clear();
+  allowanceExceededHintsLogged.clear();
+  allowancePrecheckHintsLogged.clear();
   claimableRewardsCache.clear();
+  usdcAllowanceCache.clear();
   dedicatedReadClientCache.clear();
 
   guardrailOwnerCache.owner = null;

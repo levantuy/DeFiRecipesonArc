@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import http from 'node:http';
-import { createWalletClient, http as viemHttp } from 'viem';
+import { createWalletClient, http as viemHttp, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES } from './config/contracts';
@@ -21,7 +21,7 @@ export function getKeeperAccount() {
   return privateKeyToAccount(getKeeperPrivateKey());
 }
 
-export function getKeeperWalletClient() {
+export function getKeeperWalletClient(): WalletClient {
   const account = getKeeperAccount();
   return createWalletClient({
     account,

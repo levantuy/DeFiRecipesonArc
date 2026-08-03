@@ -2,9 +2,12 @@
   "name": "defi-recipes-web",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20 <24"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/next-build.js",
     "start": "next start",
     "lint": "next lint"
   },

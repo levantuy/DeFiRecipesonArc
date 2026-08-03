@@ -193,6 +193,36 @@ export const recipesRepository = {
     return mapRecipeRow(rows[0]);
   },
 
+  async updateParametersJson(recipeId: string, parametersJson: JsonObject): Promise<ActiveRecipeRecord> {
+    const now = new Date();
+    const rows = await query<ActiveRecipeRow>({
+      name: 'recipe-update-parameters-json',
+      text: `
+        UPDATE "ActiveRecipe"
+        SET "parametersJson" = $2::jsonb, "updatedAt" = $3
+        WHERE id = $1
+        RETURNING
+          id,
+          "userAddress",
+          "recipeType",
+          status,
+          "targetProtocol",
+          "swapProvider",
+          "parametersJson",
+          "lastExecutedAt",
+          "createdAt",
+          "updatedAt"
+      `,
+      values: [recipeId, JSON.stringify(parametersJson), now],
+    });
+
+    if (rows.length === 0) {
+      throw new Error('No matching recipe found to update parametersJson.');
+    }
+
+    return mapRecipeRow(rows[0]);
+  },
+
   async findByStatus(status: RecipeStatus): Promise<ActiveRecipeRecord[]> {
     const rows = await query<ActiveRecipeRow>({
       name: 'recipe-find-by-status',

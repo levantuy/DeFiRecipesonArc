@@ -22,6 +22,7 @@ export interface RuntimeConfig {
   gatewayTransferPath: string;
   redisUrl: string;
   redisRetryMaxDelayMs: number;
+  allowAppKitDcaGuardrailBypass: boolean;
 }
 
 function parseBooleanEnv(key: string, fallback: boolean): boolean {
@@ -123,4 +124,5 @@ export const RUNTIME_CONFIG: RuntimeConfig = {
   gatewayTransferPath: process.env.GATEWAY_TRANSFER_PATH || '/v1/transfers',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   redisRetryMaxDelayMs: parseIntegerEnv('REDIS_RETRY_MAX_DELAY_MS', 10_000, 250, 120_000),
+  allowAppKitDcaGuardrailBypass: parseBooleanEnv('APP_KIT_DCA_GUARDRAIL_BYPASS', false),
 };

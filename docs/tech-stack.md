@@ -87,6 +87,10 @@ graph TD
 
 ---
 
+> **Compatibility Note (Web Build):** `web/` currently targets Next.js `14.2.x` and is most stable on Node `20 LTS`. On Windows with Node `24.x`, use the repository build wrapper (`npm run build` in `web/`) which clears `.next` and disables Next build worker for deterministic output.
+
+---
+
 ## 3. Chi tiết Thành phần Kiến trúc (Component Deep-Dive)
 
 ### 3.1. Smart Contract Layer (On-Chain Execution)

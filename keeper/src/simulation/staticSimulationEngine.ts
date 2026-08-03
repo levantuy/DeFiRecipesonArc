@@ -1,4 +1,4 @@
-import { createPublicClient, http, fallback, Address, Hex } from 'viem';
+import { createPublicClient, http, fallback, Address, Hex, type PublicClient } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { RUNTIME_CONFIG } from '../config/runtime';
@@ -118,7 +118,7 @@ async function trySimulationWithClient(
   };
 }
 
-export const publicClient = createPublicClient({
+export const publicClient: PublicClient = createPublicClient({
   chain: arcTestnet,
   transport: buildArcRpcFallbackTransport(),
 });

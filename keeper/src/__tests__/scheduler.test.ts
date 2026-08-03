@@ -20,12 +20,16 @@ const { writeContractMock, createWalletClientMock } = vi.hoisted(() => {
 
 const {
   findByIdMock,
+  updateParametersJsonMock,
+  updateStatusMock,
   updateLastExecutedAtMock,
   createSimulatingLogMock,
   updateLogStatusMock,
 } = vi.hoisted(() => {
   return {
     findByIdMock: vi.fn(),
+    updateParametersJsonMock: vi.fn(),
+    updateStatusMock: vi.fn(),
     updateLastExecutedAtMock: vi.fn(),
     createSimulatingLogMock: vi.fn(),
     updateLogStatusMock: vi.fn(),
@@ -43,6 +47,8 @@ vi.mock('viem', async () => {
 vi.mock('../db/repositories/recipesRepository', () => ({
   recipesRepository: {
     findById: findByIdMock,
+    updateParametersJson: updateParametersJsonMock,
+    updateStatus: updateStatusMock,
     updateLastExecutedAt: updateLastExecutedAtMock,
   },
 }));
@@ -59,6 +65,8 @@ describe('Queue Scheduler & Job Execution', () => {
     vi.clearAllMocks();
     RUNTIME_CONFIG.keeperSyncConfirmationInHotPath = true;
     findByIdMock.mockResolvedValue(null);
+    updateParametersJsonMock.mockResolvedValue(undefined);
+    updateStatusMock.mockResolvedValue(undefined);
     updateLastExecutedAtMock.mockResolvedValue(undefined);
     createSimulatingLogMock.mockResolvedValue({ id: 'log-1' });
     updateLogStatusMock.mockResolvedValue(undefined);
@@ -186,5 +194,60 @@ describe('Queue Scheduler & Job Execution', () => {
     expect(result.confirmationMode).toBe('async');
     expect(queueAddSpy).toHaveBeenCalledTimes(1);
     expect(waitForReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it('should persist DCA spend progress after confirmed execution', async () => {
+    process.env.KEEPER_PRIVATE_KEY = `0x${'4'.repeat(64)}`;
+
+    vi.spyOn(simulationEngine, 'simulateRecipeStep').mockResolvedValueOnce({
+      success: true,
+      estimatedGasUsdc: 92000n,
+    });
+
+    writeContractMock.mockResolvedValue(
+      '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    );
+    createWalletClientMock.mockReturnValue({
+      writeContract: writeContractMock,
+    });
+
+    findByIdMock.mockResolvedValue({
+      id: 'test-recipe-123',
+      recipeType: 'RECURRING_DCA',
+      status: 'ACTIVE',
+      userAddress: '0x1111111111111111111111111111111111111111',
+      parametersJson: {
+        totalBudgetUsdc: '20',
+        totalBudgetBaseUnits: '20000000',
+        perExecutionAmountUsdc: '5',
+        perExecutionAmountBaseUnits: '5000000',
+        spentAmountBaseUnits: '0',
+        executedCount: 0,
+        mode: 'PULL',
+        status: 'ACTIVE',
+      },
+    });
+
+    vi.spyOn(simulationEngine.publicClient, 'waitForTransactionReceipt').mockResolvedValueOnce({
+      blockNumber: 125n,
+      status: 'success',
+      gasUsed: 21000n,
+    } as Awaited<ReturnType<typeof simulationEngine.publicClient.waitForTransactionReceipt>>);
+
+    await executeRecipeStepDirectly({
+      ...sampleJobData,
+      recipeType: 'RECURRING_DCA',
+      dcaMode: 'PULL',
+      dcaExecutionAmountBaseUnits: '5000000',
+    });
+
+    expect(updateParametersJsonMock).toHaveBeenCalledTimes(1);
+    expect(updateParametersJsonMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        spentAmountBaseUnits: '5000000',
+        executedCount: 1,
+        status: 'ACTIVE',
+      })
+    );
   });
 });

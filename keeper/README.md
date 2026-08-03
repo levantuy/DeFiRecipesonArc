@@ -25,6 +25,21 @@ npm run db:migrate
 The SQL runner stores applied migrations in `_sql_migrations` with checksum verification.
 If a migration checksum changes after being applied, the runner will fail to prevent drift.
 
+## DCA routing policy (single path)
+
+RECURRING_DCA now uses a single execution path only:
+
+1. Keeper resolves route + transaction payload through `dcaSwapRouteClient` (ARC App Kit Swap).
+2. Keeper executes the returned `targetProtocolAddress` and `callData` directly.
+3. If App Kit returns `No route available`, the recipe is skipped for that cycle and logged as action-required.
+
+Legacy fallback swap construction (e.g. local `swapExactTokensForTokens` callData assembly from configured `targetProtocol`) is intentionally disabled to keep runtime behavior deterministic.
+
+API contract for `POST /recipes/register` with `recipeType=RECURRING_DCA`:
+
+- `swapProvider` is always enforced to `ARC_APP_KIT_SWAP`.
+- `targetProtocol` is not accepted.
+
 ## Endpoint smoke and cleanup for staging pipeline
 
 Run smoke test and cleanup in one command:

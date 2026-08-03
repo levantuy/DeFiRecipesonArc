@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 interface ActiveRecipeItem {
   id: string;
   userAddress: string;
@@ -30,6 +34,8 @@ const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_DCA_MAX_SLIPPAGE_BPS = 100;
 const MIN_DCA_SLIPPAGE_BPS = 10;
 const MAX_DCA_SLIPPAGE_BPS = 1000;
+
+type DcaExecutionMode = 'PREFUND' | 'PULL';
 
 function getKeeperApiBaseUrl() {
   const configured = process.env.KEEPER_API_BASE_URL || process.env.NEXT_PUBLIC_KEEPER_API_BASE_URL;
@@ -72,6 +78,31 @@ function normalizeMaxSlippageBps(rawValue: unknown): number {
   return rawValue;
 }
 
+function normalizeDcaUsdcAmount(rawValue: unknown, fieldName: string): string {
+  if (typeof rawValue !== 'string') {
+    throw new Error(`${fieldName} must be a string.`);
+  }
+
+  const normalized = rawValue.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error(`${fieldName} must be numeric with up to 6 decimals.`);
+  }
+
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`${fieldName} must be greater than 0.`);
+  }
+
+  return normalized;
+}
+
+function normalizeDcaExecutionMode(rawValue: unknown): DcaExecutionMode {
+  if (rawValue === 'PREFUND') {
+    return 'PREFUND';
+  }
+  return 'PULL';
+}
+
 // In-memory active recipe storage for Web UI (syncs with keeper DB if available)
 const inMemoryRecipes: ActiveRecipeItem[] = [
   {
@@ -89,7 +120,7 @@ const inMemoryRecipes: ActiveRecipeItem[] = [
     id: 'recipe-recurring-dca-1',
     userAddress: '0x3600...0001',
     recipeType: 'RECURRING_DCA',
-    recipeName: 'USDC -> cirBTC Recurring DCA',
+    recipeName: 'USDC -> EURC Recurring DCA',
     targetProtocol: 'Arc App Kit Swap API',
     maxSlippageBps: 100,
     maxUsdcSpendLimit: '500',
@@ -121,6 +152,30 @@ export async function POST(request: Request) {
       const requestedSlippage = body.maxSlippageBps ?? requestParameters.maxSlippageBps;
       const maxSlippageBps = normalizeMaxSlippageBps(requestedSlippage);
       requestParameters.maxSlippageBps = maxSlippageBps;
+
+      if (body.recipeType === 'RECURRING_DCA') {
+        const requestedTotalBudget = requestParameters.totalBudgetUsdc;
+        const requestedPerExecution = requestParameters.perExecutionAmountUsdc;
+        const requestedMode = requestParameters.mode;
+
+        if (requestedTotalBudget === undefined || requestedPerExecution === undefined) {
+          throw new Error('RECURRING_DCA requires totalBudgetUsdc and perExecutionAmountUsdc.');
+        }
+
+        const totalBudgetUsdc = normalizeDcaUsdcAmount(requestedTotalBudget, 'totalBudgetUsdc');
+        const perExecutionAmountUsdc = normalizeDcaUsdcAmount(requestedPerExecution, 'perExecutionAmountUsdc');
+
+        if (Number(perExecutionAmountUsdc) > Number(totalBudgetUsdc)) {
+          throw new Error('perExecutionAmountUsdc must be less than or equal to totalBudgetUsdc.');
+        }
+
+        requestParameters.totalBudgetUsdc = totalBudgetUsdc;
+        requestParameters.perExecutionAmountUsdc = perExecutionAmountUsdc;
+        requestParameters.mode = normalizeDcaExecutionMode(requestedMode);
+
+        // Backward-compatible aliases still consumed by current scheduler code paths.
+        requestParameters.dcaAmountUsdc = perExecutionAmountUsdc;
+      }
 
       const keeperPayload: Record<string, unknown> = {
         userAddress: body.userAddress,

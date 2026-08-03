@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
-import { ExecutionStatus } from '../db/types';
+import { ExecutionStatus, RecipeStatus } from '../db/types';
 import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 import { ARC_TESTNET_CONFIG, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { getKeeperPrivateKey, RUNTIME_CONFIG } from '../config/runtime';
@@ -14,6 +14,7 @@ import {
 } from '../observability/metrics';
 import { executionLogsRepository } from '../db/repositories/executionLogsRepository';
 import { recipesRepository } from '../db/repositories/recipesRepository';
+import { applyDcaExecution, parseDcaConfigStateStrict, remainingBudgetBaseUnits, toPersistedDcaParameters } from '../domain/dcaConfig';
 
 const REDIS_URL = RUNTIME_CONFIG.redisUrl;
 const TX_RETRY_BASE_DELAY_MS = 1500;
@@ -115,6 +116,8 @@ export interface RecipeExecutionJobData {
   queueEnqueuedAtMs?: number;
   preflightSimulationPassed?: boolean;
   preflightEstimatedGasUsdc?: string;
+  dcaMode?: 'PREFUND' | 'PULL';
+  dcaExecutionAmountBaseUnits?: string;
 }
 
 export interface TxConfirmationJobData {
@@ -124,6 +127,42 @@ export interface TxConfirmationJobData {
   queueEnqueuedAtMs?: number;
   txSubmittedAtMs: number;
   preflightEstimatedGasUsdc?: string;
+  dcaMode?: 'PREFUND' | 'PULL';
+  dcaExecutionAmountBaseUnits?: string;
+}
+
+async function persistDcaExecutionProgress(data: TxConfirmationJobData): Promise<void> {
+  if (!data.dcaExecutionAmountBaseUnits) {
+    return;
+  }
+
+  const recipe = await recipesRepository.findById(data.recipeId);
+  if (!recipe || recipe.recipeType !== 'RECURRING_DCA') {
+    return;
+  }
+
+  const currentState = parseDcaConfigStateStrict(recipe.parametersJson);
+  const nextState = applyDcaExecution(currentState, BigInt(data.dcaExecutionAmountBaseUnits));
+  const nextParameters = toPersistedDcaParameters(
+    recipe.parametersJson as Record<string, unknown>,
+    nextState
+  );
+
+  await recipesRepository.updateParametersJson(recipe.id, nextParameters);
+
+  const remaining = remainingBudgetBaseUnits(nextState);
+  console.info(
+    `[DCA_EVENT] DcaExecuted(user=${recipe.userAddress}, executionAmount=${data.dcaExecutionAmountBaseUnits}, ` +
+    `totalSpent=${nextState.spentAmountBaseUnits.toString()}, remainingBudget=${remaining.toString()})`
+  );
+
+  if (nextState.status === 'COMPLETED' && recipe.status === RecipeStatus.ACTIVE) {
+    await recipesRepository.updateStatus(recipe.id, RecipeStatus.COMPLETED);
+    console.info(
+      `[DCA_EVENT] DcaCompleted(user=${recipe.userAddress}, totalBudget=${nextState.totalBudgetBaseUnits.toString()}, ` +
+      `totalSpent=${nextState.spentAmountBaseUnits.toString()})`
+    );
+  }
 }
 
 function getRecipeLogContext(data: RecipeExecutionJobData): string {
@@ -185,6 +224,11 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
         console.warn('[Keeper Engine] Failed to persist confirmed execution log.');
       });
   }
+
+  await persistDcaExecutionProgress(data).catch((error: unknown) => {
+    const message = getErrorMessage(error);
+    console.warn(`[Keeper Engine] Failed to persist DCA progress for recipeId=${data.recipeId}: ${message}`);
+  });
 
   await recipesRepository
     .updateLastExecutedAt(data.recipeId, new Date())
@@ -358,6 +402,8 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     queueEnqueuedAtMs: data.queueEnqueuedAtMs,
     txSubmittedAtMs: Date.now(),
     preflightEstimatedGasUsdc: estimatedGasUsdc,
+    dcaMode: data.dcaMode,
+    dcaExecutionAmountBaseUnits: data.dcaExecutionAmountBaseUnits,
   };
 
   if (RUNTIME_CONFIG.keeperSyncConfirmationInHotPath) {

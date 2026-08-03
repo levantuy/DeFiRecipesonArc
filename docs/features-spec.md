@@ -228,20 +228,20 @@ sequenceDiagram
 
 ---
 
-#### F-3.2: Recipe 2 - USDC -> cirBTC Recurring DCA (P0 - MVP Core)
+#### F-3.2: Recipe 2 - USDC -> EURC Recurring DCA (P0 - MVP Core)
 
-* **Mục tiêu:** Tự động tích lũy `cirBTC` bằng USDC theo lịch trình cố định.
+* **Mục tiêu:** Tự động tích lũy `EURC` bằng USDC theo lịch trình cố định.
 * **Route Source:** Sử dụng Arc App Kit Swap API làm lớp định tuyến swap chuẩn thay cho phụ thuộc vào một DEX router cố định: https://docs.arc.io/app-kit/swap.
 * **Tần suất thực thi:** Hàng tuần / Hàng tháng (Ví dụ: 09:00 AM UTC Thứ Hai hàng tuần).
 * **Quy trình chi tiết (Detailed Workflow):**
   1. Keeper kiểm tra lịch trình kích hoạt và xác minh số dư USDC khả dụng trong ví người dùng.
   2. Keeper lấy quote + route từ Arc App Kit Swap và thực hiện `eth_call` để xác thực đầu ra kỳ vọng.
   3. Gửi lệnh qua `SharedExecutor`: Rút lượng USDC đã cấu hình (vd: 50 USDC) từ ví người dùng qua lệnh uỷ quyền Session Key.
-  4. Thực hiện Swap USDC $\rightarrow$ cirBTC theo route của Arc App Kit Swap với `minCirBtcOut`.
-  5. Chuyển thẳng số cirBTC thu được về ví cá nhân của người dùng.
+  4. Thực hiện Swap USDC $\rightarrow$ EURC theo route của Arc App Kit Swap với `minEurcOut`.
+  5. Chuyển thẳng số EURC thu được về ví cá nhân của người dùng.
 * **Tham số Đầu vào (Input Parameters):**
   * `dcaAmountUsdc`: Số tiền USDC cho mỗi lần mua (vd: `50000000` = 50 USDC).
-  * `targetAssetSymbol`: Ký hiệu token đích trên Arc Testnet (`cirBTC` mặc định, chỉ chấp nhận `USDC` / `EURC` / `cirBTC` ở tầng validate cấu hình).
+  * `targetAssetSymbol`: Ký hiệu token đích trên Arc Testnet (`EURC` mặc định, chỉ chấp nhận `USDC` / `EURC` / `cirBTC` ở tầng validate cấu hình).
   * `frequency`: Chu kỳ mua (`WEEKLY` / `MONTHLY`).
   * `maxSlippageBps`: Trượt giá cho phép (`50` = 0.5%).
 * **Xử lý Lỗi & Ngoại lệ (Edge Cases):**
@@ -394,7 +394,7 @@ graph LR
 | Thời gian (UTC) | Recipe | Thao tác | Số tiền (USDC) | Trạng thái | Arc Explorer Tx Hash |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | 2026-07-27 10:00 | Yield Auto-Compounder | Claim & Re-deposit | +12.45 USDC | <span style="color:green">Success</span> | [`0xabc...123`](#) |
-| 2026-07-27 09:00 | Recurring DCA | Swap USDC -> cirBTC | 50.00 USDC | <span style="color:green">Success</span> | [`0xdef...456`](#) |
+| 2026-07-27 09:00 | Recurring DCA | Swap USDC -> EURC | 50.00 USDC | <span style="color:green">Success</span> | [`0xdef...456`](#) |
 | 2026-07-26 14:30 | Yield Rebalancer | Rebalance Lending -> Vault | 1,000.00 USDC | <span style="color:red">Reverted (Slippage)</span> | [`0x789...ghi`](#) |
 
 ---
@@ -421,7 +421,7 @@ graph LR
 | Hạng mục / Tính năng | Phase 1 (MVP P0) | Phase 2 (P1 Roadmap) | Phase 3 (Community Marketplace) |
 | :--- | :---: | :---: | :---: |
 | **Recipe 1: Yield Auto-Compounder** | **Full Specs (P0)** | Nâng cấp Multi-Vault | Custom Compound Strategy |
-| **Recipe 2: Recurring DCA** | **Full Specs (P0)** | USDC -> cirBTC DCA | Limit Order Integration |
+| **Recipe 2: Recurring DCA** | **Full Specs (P0)** | USDC -> EURC DCA | Limit Order Integration |
 | **Recipe 3: Smart Yield Rebalancer** | **Full Specs (P0)** | AI-driven Yield Prediction | Cross-chain Rebalancing |
 | **Recipe 4: Safety Net / Stop-Loss** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Advanced Liquidation Shield |
 | **Recipe 5: Savings Stream** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Employer Payroll Stream |

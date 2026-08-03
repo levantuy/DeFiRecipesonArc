@@ -89,6 +89,43 @@ describe('dcaSwapRouteClient', () => {
     });
   });
 
+  it('extracts spenderAddress from allowanceTarget when provided by service response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          transaction: {
+            executionParams: {
+              instructions: [
+                {
+                  target: '0x4444444444444444444444444444444444444444',
+                  data: '0x12345678',
+                },
+              ],
+            },
+          },
+          quote: {
+            allowanceTarget: '0x5555555555555555555555555555555555555555',
+          },
+          minAmountOut: '47000000',
+        }),
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createDcaSwapRouteClientFromRuntime } = await import('../integrations/circle/dcaSwapRouteClient');
+    const client = createDcaSwapRouteClientFromRuntime();
+
+    const plan = await client.resolveRoute(request);
+
+    expect(plan).toEqual({
+      targetProtocolAddress: '0x4444444444444444444444444444444444444444',
+      callData: '0x12345678',
+      minSwapAssetOutBaseUnits: 47000000n,
+      spenderAddress: '0x5555555555555555555555555555555555555555',
+    });
+  });
+
   it('throws a clear error when stablecoin service request fails', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

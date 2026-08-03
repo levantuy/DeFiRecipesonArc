@@ -1,20 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecipeStatus, RecipeType } from '../db/types';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
-const { findByStatusMock, queueAddMock, simulateRecipeStepMock, getBytecodeMock, readContractMock, dcaResolveRouteMock } = vi.hoisted(() => {
+const {
+  findByStatusMock,
+  updateParametersJsonMock,
+  queueAddMock,
+  simulateRecipeStepMock,
+  getBytecodeMock,
+  readContractMock,
+  dcaResolveRouteMock,
+  waitForTransactionReceiptMock,
+  writeContractMock,
+} = vi.hoisted(() => {
   return {
     findByStatusMock: vi.fn(),
+    updateParametersJsonMock: vi.fn(),
     queueAddMock: vi.fn(),
     simulateRecipeStepMock: vi.fn(),
     getBytecodeMock: vi.fn(),
     readContractMock: vi.fn(),
     dcaResolveRouteMock: vi.fn(),
+    waitForTransactionReceiptMock: vi.fn(),
+    writeContractMock: vi.fn(),
   };
 });
 
 vi.mock('../db/repositories/recipesRepository', () => ({
   recipesRepository: {
     findByStatus: findByStatusMock,
+    updateParametersJson: updateParametersJsonMock,
   },
 }));
 
@@ -29,12 +44,16 @@ vi.mock('../simulation/staticSimulationEngine', () => ({
   publicClient: {
     getBytecode: getBytecodeMock,
     readContract: readContractMock,
+    waitForTransactionReceipt: waitForTransactionReceiptMock,
   },
 }));
 
 vi.mock('../index', () => ({
   getKeeperAccount: () => ({
     address: '0x3333333333333333333333333333333333333333',
+  }),
+  getKeeperWalletClient: () => ({
+    writeContract: writeContractMock,
   }),
 }));
 
@@ -64,9 +83,13 @@ describe('Cron Scheduler Recipe Triggering', () => {
     vi.clearAllMocks();
     __resetCronSchedulerStateForTests();
     findByStatusMock.mockResolvedValue([]);
+    updateParametersJsonMock.mockResolvedValue(undefined);
     simulateRecipeStepMock.mockResolvedValue({ success: true, estimatedGasUsdc: 90000n });
     getBytecodeMock.mockResolvedValue('0x1234');
     readContractMock.mockResolvedValue(true);
+    waitForTransactionReceiptMock.mockResolvedValue({ status: 'success' });
+    writeContractMock.mockResolvedValue('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    RUNTIME_CONFIG.allowAppKitDcaGuardrailBypass = false;
     dcaResolveRouteMock.mockResolvedValue({
       targetProtocolAddress: '0x5555555555555555555555555555555555555555',
       callData: '0x12345678',
@@ -107,7 +130,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
         id: 'dca-1',
         recipeType: RecipeType.RECURRING_DCA,
         swapProvider: 'ARC_APP_KIT_SWAP',
-        parametersJson: { dcaAmountUsdc: '50' },
+        parametersJson: { totalBudgetUsdc: '500', perExecutionAmountUsdc: '50', mode: 'PULL' },
       }),
     ]);
 
@@ -118,7 +141,16 @@ describe('Cron Scheduler Recipe Triggering', () => {
       expect.objectContaining({
         amountInBaseUnits: 50000000n,
         maxSlippageBps: 100,
-        targetAssetSymbol: 'cirBTC',
+        targetAssetSymbol: 'EURC',
+      })
+    );
+    expect(updateParametersJsonMock).toHaveBeenCalledWith(
+      'dca-1',
+      expect.objectContaining({
+        totalBudgetUsdc: '500',
+        perExecutionAmountUsdc: '50',
+        mode: 'PULL',
+        targetAssetSymbol: 'EURC',
       })
     );
 
@@ -139,7 +171,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
         id: 'dca-dynamic-slippage',
         recipeType: RecipeType.RECURRING_DCA,
         swapProvider: 'ARC_APP_KIT_SWAP',
-        parametersJson: { dcaAmountUsdc: '50', maxSlippageBps: 250 },
+        parametersJson: { totalBudgetUsdc: '500', perExecutionAmountUsdc: '50', mode: 'PULL', maxSlippageBps: 250 },
       }),
     ]);
 
@@ -150,7 +182,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
       expect.objectContaining({
         amountInBaseUnits: 50000000n,
         maxSlippageBps: 250,
-        targetAssetSymbol: 'cirBTC',
+        targetAssetSymbol: 'EURC',
       })
     );
   });
@@ -161,7 +193,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
         id: 'dca-not-due',
         recipeType: RecipeType.RECURRING_DCA,
         swapProvider: 'ARC_APP_KIT_SWAP',
-        parametersJson: { dcaAmountUsdc: '50', checkIntervalHours: 24 },
+        parametersJson: { totalBudgetUsdc: '500', perExecutionAmountUsdc: '50', mode: 'PULL', checkIntervalHours: 24 },
         lastExecutedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
       }),
     ]);
@@ -179,7 +211,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
         recipeType: RecipeType.RECURRING_DCA,
         targetProtocol: null,
         swapProvider: 'ARC_APP_KIT_SWAP',
-        parametersJson: { dcaAmountUsdc: '50', maxSlippageBps: 100 },
+        parametersJson: { totalBudgetUsdc: '500', perExecutionAmountUsdc: '50', mode: 'PULL', maxSlippageBps: 100 },
       }),
     ]);
 
@@ -193,7 +225,8 @@ describe('Cron Scheduler Recipe Triggering', () => {
     expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to configured targetProtocol when App Kit reports no route available', async () => {
+  it('skips DCA enqueue when App Kit reports no route available', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dcaResolveRouteMock.mockRejectedValueOnce(
       new Error('Arc App Kit swap service request failed: {"code":331001,"message":"No route available"}')
     );
@@ -205,7 +238,9 @@ describe('Cron Scheduler Recipe Triggering', () => {
         targetProtocol: '0x6666666666666666666666666666666666666666',
         swapProvider: 'ARC_APP_KIT_SWAP',
         parametersJson: {
-          dcaAmountUsdc: '50',
+          totalBudgetUsdc: '500',
+          perExecutionAmountUsdc: '50',
+          mode: 'PULL',
           maxSlippageBps: 100,
           targetAssetSymbol: 'cirBTC',
         },
@@ -215,17 +250,15 @@ describe('Cron Scheduler Recipe Triggering', () => {
     await pollAndTriggerActiveRecipes();
 
     expect(dcaResolveRouteMock).toHaveBeenCalledTimes(1);
-    expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
 
-    const simReq = simulateRecipeStepMock.mock.calls[0][0];
-    expect(simReq.targetProtocolAddress).toBe('0x6666666666666666666666666666666666666666');
-    expect(typeof simReq.callData).toBe('string');
-    expect(simReq.callData.startsWith('0x38ed1739')).toBe(true);
-    expect(simReq.minAmountOut).toBe(50000000n);
+    const actionRequiredWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter((value) => typeof value === 'string' && value.includes('App Kit has no swap route'));
+    expect(actionRequiredWarnings).toHaveLength(1);
 
-    expect(queueAddMock).toHaveBeenCalledTimes(1);
-    const jobData = queueAddMock.mock.calls[0][1];
-    expect(jobData.recipeId).toBe('dca-no-route-fallback');
+    warnSpy.mockRestore();
   });
 
   it('skips invalid recipe parameters without stopping other due recipes', async () => {
@@ -233,7 +266,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
       makeActiveRecipe({
         id: 'bad-dca',
         recipeType: RecipeType.RECURRING_DCA,
-        parametersJson: { dcaAmountUsdc: '-1' },
+        parametersJson: { totalBudgetUsdc: '-1', perExecutionAmountUsdc: '1', mode: 'PULL' },
       }),
       makeActiveRecipe({
         id: 'good-compounder',
@@ -275,6 +308,165 @@ describe('Cron Scheduler Recipe Triggering', () => {
       .flatMap((call) => call)
       .filter((value) => typeof value === 'string' && value.includes('Guardrail blocks selector'));
     expect(actionRequiredWarnings).toHaveLength(1);
+
+    warnSpy.mockRestore();
+  });
+
+  it('bypasses guardrail whitelist checks for App Kit DCA when runtime flag is enabled', async () => {
+    RUNTIME_CONFIG.allowAppKitDcaGuardrailBypass = true;
+    readContractMock
+      .mockResolvedValueOnce(50000000n) // USDC balance precheck
+      .mockResolvedValueOnce(50000000n) // USDC allowance precheck
+      .mockResolvedValueOnce('0x3333333333333333333333333333333333333333') // guardrail owner
+      .mockResolvedValueOnce(false) // protocol not allowed (auto-whitelist branch)
+      .mockResolvedValueOnce(false) // selector not allowed (auto-whitelist branch)
+      .mockResolvedValueOnce(true) // protocol allowed after auto-whitelist
+      .mockResolvedValueOnce(true); // selector allowed after auto-whitelist
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-guardrail-bypass',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '500', perExecutionAmountUsdc: '50', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    expect(dcaResolveRouteMock).toHaveBeenCalledTimes(1);
+    expect(writeContractMock).toHaveBeenCalledTimes(2);
+    expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs DCA allowance warning once with explicit spender address', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0x7777777777777777777777777777777777777777',
+      callData: '0x12345678',
+      minSwapAssetOutBaseUnits: 49500000n,
+      spenderAddress: '0x8888888888888888888888888888888888888888',
+    });
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-allowance-low',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    simulateRecipeStepMock.mockResolvedValue({
+      success: false,
+      errorMessage: 'execution reverted: ERC20: transfer amount exceeds allowance',
+    });
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      ) as string[];
+
+    expect(allowanceWarnings).toHaveLength(1);
+    expect(allowanceWarnings[0]).toContain('spender=0x8888888888888888888888888888888888888888');
+
+    warnSpy.mockRestore();
+  });
+
+  it('skips simulation when DCA allowance precheck is below required spend', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0x9999999999999999999999999999999999999999',
+      callData: '0xabcdef12',
+      minSwapAssetOutBaseUnits: 4950000n,
+      spenderAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+
+    readContractMock
+      .mockResolvedValueOnce(5000000n) // USDC balance precheck
+      .mockResolvedValueOnce(1000000n); // USDC allowance precheck
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-precheck-low-allowance',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      ) as string[];
+
+    expect(allowanceWarnings).toHaveLength(1);
+    expect(allowanceWarnings[0]).toContain('spender=0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(allowanceWarnings[0]).toContain('currentAllowanceBaseUnits=1000000');
+    expect(allowanceWarnings[0]).toContain('requiredBaseUnits=5000000');
+
+    warnSpy.mockRestore();
+  });
+
+  it('infers DCA spender from callData selector when route response omits spenderAddress', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+      callData:
+        '0x7ebc46f0' +
+        '0000000000000000000000003600000000000000000000000000000000000000' +
+        '000000000000000000000000c06ebbefd94032b85424d51906e2a335efae264b' +
+        '00000000000000000000000000000000000000000000000000000000000003e8',
+      minSwapAssetOutBaseUnits: 4950000n,
+    });
+
+    readContractMock
+      .mockResolvedValueOnce(5000000n) // USDC balance precheck
+      .mockResolvedValueOnce(1000000n); // USDC allowance precheck
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-inferred-spender-low-allowance',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      ) as string[];
+
+    expect(allowanceWarnings).toHaveLength(1);
+    expect(allowanceWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
 
     warnSpy.mockRestore();
   });

@@ -4,9 +4,14 @@ import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types'
 import type { Address } from 'viem';
 import { publicClient } from '../simulation/staticSimulationEngine';
 import {
+  DEFAULT_DCA_TARGET_ASSET_SYMBOL,
   parseDcaMaxSlippageBpsStrict,
   parseDcaTargetAssetSymbolStrict,
 } from '../config/dcaRouting';
+import {
+  parseDcaConfigStateStrict,
+  toPersistedDcaParameters,
+} from '../domain/dcaConfig';
 
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const RECIPE_TYPE_SET = new Set(Object.values(RecipeType));
@@ -99,20 +104,44 @@ function parseRegisterPayload(rawBody: unknown): {
   }
 
   if (recipeType === RecipeType.RECURRING_DCA) {
-    if (!targetProtocol && swapProvider !== 'ARC_APP_KIT_SWAP') {
-      throw new Error('RECURRING_DCA requires targetProtocol or swapProvider=ARC_APP_KIT_SWAP.');
+    if (targetProtocol) {
+      throw new Error('RECURRING_DCA does not accept targetProtocol. Route resolution is managed by ARC_APP_KIT_SWAP.');
     }
 
-    if (isRecord(parametersJson) && (parametersJson as Record<string, unknown>).maxSlippageBps !== undefined) {
-      parseDcaMaxSlippageBpsStrict((parametersJson as Record<string, unknown>).maxSlippageBps);
+    if (swapProvider !== null && swapProvider !== 'ARC_APP_KIT_SWAP') {
+      throw new Error('RECURRING_DCA requires swapProvider=ARC_APP_KIT_SWAP.');
     }
 
-    if (isRecord(parametersJson) && (parametersJson as Record<string, unknown>).targetAssetSymbol !== undefined) {
-      parseDcaTargetAssetSymbolStrict((parametersJson as Record<string, unknown>).targetAssetSymbol);
+    let dcaParameters = { ...(parametersJson as Record<string, unknown>) };
+
+    if (dcaParameters.maxSlippageBps !== undefined) {
+      parseDcaMaxSlippageBpsStrict(dcaParameters.maxSlippageBps);
     }
+
+    const normalizedDcaState = parseDcaConfigStateStrict(dcaParameters);
+    dcaParameters = {
+      ...dcaParameters,
+      ...toPersistedDcaParameters(dcaParameters as JsonObject, normalizedDcaState),
+    };
+
+    if (dcaParameters.targetAssetSymbol === undefined) {
+      dcaParameters.targetAssetSymbol = DEFAULT_DCA_TARGET_ASSET_SYMBOL;
+    } else {
+      dcaParameters.targetAssetSymbol = parseDcaTargetAssetSymbolStrict(dcaParameters.targetAssetSymbol);
+    }
+
+    parametersJson = dcaParameters;
+
+    return {
+      userAddress,
+      recipeType,
+      targetProtocol: null,
+      swapProvider: 'ARC_APP_KIT_SWAP',
+      parametersJson,
+    };
   }
 
-  if (recipeType !== RecipeType.RECURRING_DCA && !targetProtocol && !swapProvider) {
+  if (!targetProtocol && !swapProvider) {
     throw new Error('Either targetProtocol or swapProvider is required.');
   }
 
@@ -222,6 +251,14 @@ export async function registerOrActivateRecipe(
       recipeId: created.id,
     })}`
   );
+
+  if (payload.recipeType === RecipeType.RECURRING_DCA) {
+    const dcaState = parseDcaConfigStateStrict(payload.parametersJson);
+    console.info(
+      `[DCA_EVENT] DcaActivated(user=${payload.userAddress}, totalBudget=${dcaState.totalBudgetBaseUnits.toString()}, ` +
+      `perExecutionAmount=${dcaState.perExecutionAmountBaseUnits.toString()}, mode=${dcaState.mode})`
+    );
+  }
 
   return {
     success: true,

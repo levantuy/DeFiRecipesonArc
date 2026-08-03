@@ -131,6 +131,13 @@ export const RECIPE_GUARDRAIL_ABI = [
   },
   {
     type: 'function',
+    name: 'owner',
+    inputs: [],
+    outputs: [{ name: '', type: 'address', internalType: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'isProtocolWhitelisted',
     inputs: [{ name: 'protocol', type: 'address', internalType: 'address' }],
     outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
@@ -145,6 +152,27 @@ export const RECIPE_GUARDRAIL_ABI = [
     ],
     outputs: [{ name: '', type: 'bool', internalType: 'bool' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'setProtocolWhitelist',
+    inputs: [
+      { name: 'protocol', type: 'address', internalType: 'address' },
+      { name: 'allowed', type: 'bool', internalType: 'bool' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setSelectorWhitelist',
+    inputs: [
+      { name: 'protocol', type: 'address', internalType: 'address' },
+      { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
+      { name: 'allowed', type: 'bool', internalType: 'bool' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',

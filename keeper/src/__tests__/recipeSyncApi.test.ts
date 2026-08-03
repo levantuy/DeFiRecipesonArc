@@ -63,6 +63,9 @@ describe('recipeSyncApi register validation', () => {
       swapProvider: 'ARC_APP_KIT_SWAP',
       parametersJson: {
         maxSlippageBps: 100,
+        totalBudgetUsdc: '50',
+        perExecutionAmountUsdc: '5',
+        mode: 'PULL',
       },
     });
 
@@ -71,23 +74,55 @@ describe('recipeSyncApi register validation', () => {
       targetProtocol: null,
       swapProvider: 'ARC_APP_KIT_SWAP',
     });
+    expect(createWithUserConnectOrCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parametersJson: expect.objectContaining({
+          maxSlippageBps: 100,
+          targetAssetSymbol: 'EURC',
+          totalBudgetUsdc: '50',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
+        }),
+      })
+    );
   });
 
-  it('registers RECURRING_DCA with explicit targetProtocol when provided', async () => {
-    const result = await registerOrActivateRecipe({
+  it('rejects RECURRING_DCA registration when targetProtocol is provided', async () => {
+    await expect(
+      registerOrActivateRecipe({
+        userAddress: '0x1111111111111111111111111111111111111111',
+        recipeType: 'RECURRING_DCA',
+        targetProtocol: '0x5555555555555555555555555555555555555555',
+        parametersJson: {
+          maxSlippageBps: 100,
+          totalBudgetUsdc: '50',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
+        },
+      })
+    ).rejects.toThrow('RECURRING_DCA does not accept targetProtocol');
+  });
+
+  it('normalizes provided targetAssetSymbol for RECURRING_DCA', async () => {
+    await registerOrActivateRecipe({
       userAddress: '0x1111111111111111111111111111111111111111',
       recipeType: 'RECURRING_DCA',
-      targetProtocol: '0x5555555555555555555555555555555555555555',
+      swapProvider: 'ARC_APP_KIT_SWAP',
       parametersJson: {
-        maxSlippageBps: 100,
+        totalBudgetUsdc: '50',
+        perExecutionAmountUsdc: '5',
+        mode: 'PULL',
+        targetAssetSymbol: 'eurc',
       },
     });
 
-    expect(result.success).toBe(true);
-    expect(result.recipe).toMatchObject({
-      targetProtocol: '0x5555555555555555555555555555555555555555',
-      swapProvider: null,
-    });
+    expect(createWithUserConnectOrCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parametersJson: expect.objectContaining({
+          targetAssetSymbol: 'EURC',
+        }),
+      })
+    );
   });
 
   it('rejects unsupported targetAssetSymbol for RECURRING_DCA', async () => {
@@ -97,6 +132,9 @@ describe('recipeSyncApi register validation', () => {
         recipeType: 'RECURRING_DCA',
         swapProvider: 'ARC_APP_KIT_SWAP',
         parametersJson: {
+          totalBudgetUsdc: '50',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
           targetAssetSymbol: 'WETH',
         },
       })
@@ -111,8 +149,40 @@ describe('recipeSyncApi register validation', () => {
         swapProvider: 'ARC_APP_KIT_SWAP',
         parametersJson: {
           maxSlippageBps: 5000,
+          totalBudgetUsdc: '50',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
         },
       })
     ).rejects.toThrow('maxSlippageBps must be between 10 and 1000');
+  });
+
+  it('rejects DCA when perExecutionAmountUsdc exceeds totalBudgetUsdc', async () => {
+    await expect(
+      registerOrActivateRecipe({
+        userAddress: '0x1111111111111111111111111111111111111111',
+        recipeType: 'RECURRING_DCA',
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: {
+          totalBudgetUsdc: '10',
+          perExecutionAmountUsdc: '20',
+          mode: 'PULL',
+        },
+      })
+    ).rejects.toThrow('perExecutionAmount cannot exceed totalBudget');
+  });
+
+  it('rejects DCA when totalBudgetUsdc is missing', async () => {
+    await expect(
+      registerOrActivateRecipe({
+        userAddress: '0x1111111111111111111111111111111111111111',
+        recipeType: 'RECURRING_DCA',
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: {
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
+        },
+      })
+    ).rejects.toThrow('requires totalBudgetUsdc and perExecutionAmountUsdc');
   });
 });
