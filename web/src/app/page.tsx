@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { RecipeCatalog, RECIPES } from '@/components/RecipeCatalog';
-import { SimulationModal, RecipeConfig } from '@/components/SimulationModal';
+import { DcaAllowancePrecheckResult, SimulationModal, RecipeConfig } from '@/components/SimulationModal';
 import { PortfolioTracker } from '@/components/PortfolioTracker';
 import {
   ARC_TESTNET_CHAIN_ID,
@@ -58,6 +58,12 @@ interface DelegationSetupResult {
 interface FrontendPerformanceMetrics {
   timeToSubmittedMs: number[];
   timeToConfirmedMs: number[];
+}
+
+interface DcaAllowancePrecheckApiResponse {
+  success?: boolean;
+  allowance?: DcaAllowancePrecheckResult;
+  error?: string;
 }
 
 const ERC20_ALLOWANCE_AND_APPROVE_ABI = [
@@ -161,6 +167,41 @@ async function syncKeeperRecipe(payload: Record<string, unknown>) {
     const errorMessage = data?.error || `Keeper sync failed with status ${response.status}.`;
     throw new Error(errorMessage);
   }
+}
+
+async function precheckDcaAllowance(payload: {
+  userAddress: `0x${string}`;
+  maxSlippageBps: number;
+  totalDcaBudgetUsdc: string;
+  perExecutionUsdc: string;
+  targetAssetSymbol?: 'USDC' | 'EURC' | 'cirBTC';
+}): Promise<DcaAllowancePrecheckResult> {
+  const response = await fetch('/api/recipes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'allowancePrecheck',
+      userAddress: payload.userAddress,
+      recipeType: 'RECURRING_DCA',
+      maxSlippageBps: payload.maxSlippageBps,
+      parametersJson: {
+        totalBudgetUsdc: payload.totalDcaBudgetUsdc,
+        perExecutionAmountUsdc: payload.perExecutionUsdc,
+        mode: 'PULL',
+        ...(payload.targetAssetSymbol ? { targetAssetSymbol: payload.targetAssetSymbol } : {}),
+      },
+    }),
+  });
+
+  const data = (await response.json().catch(() => null)) as DcaAllowancePrecheckApiResponse | null;
+  if (!response.ok || !data?.success || !data.allowance) {
+    const errorMessage = data?.error || `Allowance precheck failed with status ${response.status}.`;
+    throw new Error(errorMessage);
+  }
+
+  return data.allowance;
 }
 
 export default function Home() {
@@ -397,13 +438,20 @@ export default function Home() {
   const ensureDcaUsdcAllowance = async (
     connectedAddress: `0x${string}`,
     requiredAllowanceBaseUnits: bigint,
-    executionMode: DcaExecutionMode
+    executionMode: DcaExecutionMode,
+    extraSpenders?: readonly `0x${string}`[]
   ): Promise<void> => {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
 
-    for (const spender of DCA_USDC_ALLOWANCE_SPENDERS) {
+    const spenders = Array.from(
+      new Set(
+        [...DCA_USDC_ALLOWANCE_SPENDERS, ...(extraSpenders || [])].map((spender) => spender.toLowerCase())
+      )
+    ) as `0x${string}`[];
+
+    for (const spender of spenders) {
       const currentAllowance = await publicClient.readContract({
         address: CONTRACT_ADDRESSES.usdc,
         abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
@@ -479,6 +527,8 @@ export default function Home() {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
       executionMode: DcaExecutionMode;
+      runtimeSpender?: `0x${string}`;
+      requiredSpenders?: `0x${string}`[];
     };
   }) => {
     if (!selectedRecipe || isActivating) return;
@@ -515,10 +565,47 @@ export default function Home() {
           throw new Error('Estimated runs must be at least 1 for DCA activation.');
         }
 
+        if (parsedDcaConfig.executionMode !== 'PULL') {
+          throw new Error(
+            'DCA PREFUND mode is not supported by the current on-chain execution path yet. ' +
+            'Please switch to PULL mode and retry activation.'
+          );
+        }
+
+        let runtimeSpender: `0x${string}` | null =
+          dcaConfig.runtimeSpender && isAddress(dcaConfig.runtimeSpender)
+            ? dcaConfig.runtimeSpender
+            : null;
+        let runtimeRequiredSpenders: `0x${string}`[] =
+          dcaConfig.requiredSpenders?.filter((spender) => isAddress(spender)) || [];
+
+        if (!runtimeSpender || runtimeRequiredSpenders.length === 0) {
+          try {
+            const allowancePrecheck = await precheckDcaAllowance({
+              userAddress: connectedAddress,
+              maxSlippageBps,
+              totalDcaBudgetUsdc: dcaConfig.totalDcaBudgetUsdc.trim(),
+              perExecutionUsdc: dcaConfig.perExecutionUsdc.trim(),
+              targetAssetSymbol: selectedRecipeSnapshot.targetAssetSymbol,
+            });
+            runtimeSpender = allowancePrecheck.runtimeSpender;
+            runtimeRequiredSpenders = allowancePrecheck.requiredSpenders?.filter((spender) => isAddress(spender)) || [];
+          } catch (precheckError: unknown) {
+            setFeedbackMessage(
+              `Allowance precheck warning: ${getErrorMessage(precheckError)}. Continuing with default spender approvals...`
+            );
+          }
+        }
+
         await ensureDcaUsdcAllowance(
           connectedAddress,
           parsedDcaConfig.totalDcaBudgetBaseUnits,
-          parsedDcaConfig.executionMode
+          parsedDcaConfig.executionMode,
+          runtimeRequiredSpenders.length > 0
+            ? runtimeRequiredSpenders
+            : runtimeSpender
+              ? [runtimeSpender, CONTRACT_ADDRESSES.sharedExecutorProxy]
+              : [CONTRACT_ADDRESSES.sharedExecutorProxy]
         );
 
         normalizedDcaPayload = {
@@ -985,6 +1072,20 @@ export default function Home() {
         isOpen={selectedRecipe !== null}
         recipe={selectedRecipe}
         onClose={() => setSelectedRecipe(null)}
+        onCheckDcaAllowance={async (payload) => {
+          if (!address || !isAddress(address)) {
+            throw new Error('Connect wallet first to run allowance precheck.');
+          }
+
+          return precheckDcaAllowance({
+            userAddress: address,
+            maxSlippageBps: payload.maxSlippageBps,
+            totalDcaBudgetUsdc: payload.dcaConfig.totalDcaBudgetUsdc,
+            perExecutionUsdc: payload.dcaConfig.perExecutionUsdc,
+            targetAssetSymbol: payload.targetAssetSymbol,
+          });
+        }}
+        connectedAddress={address && isAddress(address) ? address : null}
         onConfirm={handleConfirmSimulation}
         isConfirming={isActivating || isUpdatingDelegation}
       />

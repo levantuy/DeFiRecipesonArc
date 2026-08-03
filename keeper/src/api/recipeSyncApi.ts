@@ -4,14 +4,20 @@ import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types'
 import type { Address } from 'viem';
 import { publicClient } from '../simulation/staticSimulationEngine';
 import {
+  ARC_APP_KIT_DCA_USDC_SPENDER,
+  ARC_USDC_ADDRESS,
   DEFAULT_DCA_TARGET_ASSET_SYMBOL,
   parseDcaMaxSlippageBpsStrict,
+  parseDcaMaxSlippageBpsWithFallback,
   parseDcaTargetAssetSymbolStrict,
+  parseDcaTargetAssetSymbolWithFallback,
 } from '../config/dcaRouting';
+import { CONTRACT_ADDRESSES } from '../config/contracts';
 import {
   parseDcaConfigStateStrict,
   toPersistedDcaParameters,
 } from '../domain/dcaConfig';
+import { createDcaSwapRouteClientFromRuntime } from '../integrations/circle/dcaSwapRouteClient';
 
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const RECIPE_TYPE_SET = new Set(Object.values(RecipeType));
@@ -36,6 +42,30 @@ interface ListExecutionLogsPayload {
   userAddress?: unknown;
   limit?: unknown;
 }
+
+interface DcaAllowancePrecheckPayload {
+  userAddress?: unknown;
+  totalBudgetUsdc?: unknown;
+  perExecutionAmountUsdc?: unknown;
+  maxSlippageBps?: unknown;
+  targetAssetSymbol?: unknown;
+}
+
+const ERC20_ALLOWANCE_ABI = [
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address', internalType: 'address' },
+      { name: 'spender', type: 'address', internalType: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256', internalType: 'uint256' }],
+  },
+] as const;
+
+const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
 
 function recipeLogContext(params: { userAddress: string; recipeType: RecipeType; recipeId?: string }): string {
   const recipeIdPart = params.recipeId ? ` recipeId=${params.recipeId}` : '';
@@ -119,6 +149,11 @@ function parseRegisterPayload(rawBody: unknown): {
     }
 
     const normalizedDcaState = parseDcaConfigStateStrict(dcaParameters);
+    if (normalizedDcaState.mode !== 'PULL') {
+      throw new Error(
+        'RECURRING_DCA currently supports mode=PULL only. PREFUND execution path is not available yet.'
+      );
+    }
     dcaParameters = {
       ...dcaParameters,
       ...toPersistedDcaParameters(dcaParameters as JsonObject, normalizedDcaState),
@@ -386,5 +421,189 @@ export async function listExecutionLogs(
         errorMessage: log.errorMessage,
       };
     }),
+  };
+}
+
+function parseUsdcAmountToBaseUnits(value: unknown, fieldName: string): bigint {
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldName} must be a string.`);
+  }
+
+  const normalized = value.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error(`${fieldName} must be numeric with up to 6 decimals.`);
+  }
+
+  const [wholePartRaw, fractionalPartRaw = ''] = normalized.split('.');
+  const wholePart = BigInt(wholePartRaw);
+  const fractionalPart = BigInt((fractionalPartRaw + '000000').slice(0, 6));
+  const amountBaseUnits = wholePart * 1_000_000n + fractionalPart;
+
+  if (amountBaseUnits <= 0n) {
+    throw new Error(`${fieldName} must be greater than 0.`);
+  }
+
+  return amountBaseUnits;
+}
+
+function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
+  if (callData.length < 10) {
+    return '0x';
+  }
+  return callData.slice(0, 10) as `0x${string}`;
+}
+
+function extractAddressWordFromCalldata(callData: `0x${string}`, wordIndex: number): `0x${string}` | null {
+  const data = callData.slice(2);
+  const start = 8 + wordIndex * 64;
+  const end = start + 64;
+  if (data.length < end) {
+    return null;
+  }
+
+  const word = data.slice(start, end);
+  const addressHex = `0x${word.slice(24)}`;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addressHex)) {
+    return null;
+  }
+
+  return addressHex.toLowerCase() as `0x${string}`;
+}
+
+function resolveDcaAllowanceSpenderAddress(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | undefined
+): `0x${string}` {
+  if (routeSpenderAddress) {
+    return routeSpenderAddress;
+  }
+
+  if (extractSelectorFromCallData(callData).toLowerCase() === DCA_SWAP_SELECTOR) {
+    const inferredSpender = extractAddressWordFromCalldata(callData, 1);
+    if (inferredSpender) {
+      return inferredSpender;
+    }
+  }
+
+  if (targetProtocol !== ARC_APP_KIT_DCA_USDC_SPENDER) {
+    return targetProtocol;
+  }
+
+  return ARC_APP_KIT_DCA_USDC_SPENDER;
+}
+
+function getDcaAllowanceSpenderCandidates(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | undefined
+): `0x${string}`[] {
+  const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
+  return Array.from(
+    new Set([
+      runtimeSpender.toLowerCase(),
+      targetProtocol.toLowerCase(),
+      CONTRACT_ADDRESSES.sharedExecutorProxy.toLowerCase(),
+    ])
+  ).sort() as `0x${string}`[];
+}
+
+function parseDcaAllowancePrecheckPayload(rawBody: unknown): {
+  userAddress: `0x${string}`;
+  totalBudgetBaseUnits: bigint;
+  perExecutionBaseUnits: bigint;
+  maxSlippageBps: number;
+  targetAssetSymbol: string;
+} {
+  if (!isRecord(rawBody)) {
+    throw new Error('Request body must be a JSON object.');
+  }
+
+  const body = rawBody as DcaAllowancePrecheckPayload;
+  const userAddress = normalizeAddress(body.userAddress, 'userAddress') as `0x${string}`;
+  const totalBudgetBaseUnits = parseUsdcAmountToBaseUnits(body.totalBudgetUsdc, 'totalBudgetUsdc');
+  const perExecutionBaseUnits = parseUsdcAmountToBaseUnits(body.perExecutionAmountUsdc, 'perExecutionAmountUsdc');
+
+  if (perExecutionBaseUnits > totalBudgetBaseUnits) {
+    throw new Error('perExecutionAmountUsdc must be less than or equal to totalBudgetUsdc.');
+  }
+
+  const slippageResult = parseDcaMaxSlippageBpsWithFallback(body.maxSlippageBps);
+  const symbolResult = parseDcaTargetAssetSymbolWithFallback(body.targetAssetSymbol);
+
+  return {
+    userAddress,
+    totalBudgetBaseUnits,
+    perExecutionBaseUnits,
+    maxSlippageBps: slippageResult.maxSlippageBps,
+    targetAssetSymbol: symbolResult.targetAssetSymbol,
+  };
+}
+
+export async function precheckDcaAllowance(
+  rawBody: unknown
+): Promise<Record<string, unknown>> {
+  const payload = parseDcaAllowancePrecheckPayload(rawBody);
+
+  const routePlan = await dcaSwapRouteClient.resolveRoute({
+    recipientAddress: payload.userAddress,
+    amountInBaseUnits: payload.perExecutionBaseUnits,
+    maxSlippageBps: payload.maxSlippageBps,
+    targetAssetSymbol: payload.targetAssetSymbol,
+  });
+
+  const runtimeSpender = resolveDcaAllowanceSpenderAddress(
+    routePlan.callData,
+    routePlan.targetProtocolAddress,
+    routePlan.spenderAddress
+  );
+
+  const requiredSpenders = getDcaAllowanceSpenderCandidates(
+    routePlan.callData,
+    routePlan.targetProtocolAddress,
+    routePlan.spenderAddress
+  );
+
+  const allowanceBySpender: Record<string, string> = {};
+  for (const spender of requiredSpenders) {
+    const allowanceRaw = await publicClient.readContract({
+      address: ARC_USDC_ADDRESS,
+      abi: ERC20_ALLOWANCE_ABI,
+      functionName: 'allowance',
+      args: [payload.userAddress, spender],
+    });
+    allowanceBySpender[spender.toLowerCase()] = BigInt(allowanceRaw).toString();
+  }
+
+  const currentAllowanceBaseUnits = allowanceBySpender[runtimeSpender.toLowerCase()] || '0';
+  const requiredForSchedulerBaseUnits = payload.perExecutionBaseUnits.toString();
+  const requiredForActivationBaseUnits = payload.totalBudgetBaseUnits.toString();
+  const isEnoughForScheduler = requiredSpenders.every((spender) => {
+    const allowance = BigInt(allowanceBySpender[spender.toLowerCase()] || '0');
+    return allowance >= payload.perExecutionBaseUnits;
+  });
+  const isEnoughForActivation = requiredSpenders.every((spender) => {
+    const allowance = BigInt(allowanceBySpender[spender.toLowerCase()] || '0');
+    return allowance >= payload.totalBudgetBaseUnits;
+  });
+
+  return {
+    success: true,
+    allowance: {
+      userAddress: payload.userAddress,
+      runtimeSpender,
+      targetProtocolAddress: routePlan.targetProtocolAddress,
+      callDataSelector: extractSelectorFromCallData(routePlan.callData),
+      targetAssetSymbol: payload.targetAssetSymbol,
+      maxSlippageBps: payload.maxSlippageBps,
+      currentAllowanceBaseUnits,
+      requiredForSchedulerBaseUnits,
+      requiredForActivationBaseUnits,
+      requiredSpenders,
+      allowanceBySpender,
+      isEnoughForScheduler,
+      isEnoughForActivation,
+      checkedAt: new Date().toISOString(),
+    },
   };
 }

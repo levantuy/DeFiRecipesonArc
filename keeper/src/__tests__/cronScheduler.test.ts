@@ -316,7 +316,8 @@ describe('Cron Scheduler Recipe Triggering', () => {
     RUNTIME_CONFIG.allowAppKitDcaGuardrailBypass = true;
     readContractMock
       .mockResolvedValueOnce(50000000n) // USDC balance precheck
-      .mockResolvedValueOnce(50000000n) // USDC allowance precheck
+      .mockResolvedValueOnce(50000000n) // USDC allowance precheck (route spender)
+      .mockResolvedValueOnce(50000000n) // USDC allowance precheck (shared executor)
       .mockResolvedValueOnce('0x3333333333333333333333333333333333333333') // guardrail owner
       .mockResolvedValueOnce(false) // protocol not allowed (auto-whitelist branch)
       .mockResolvedValueOnce(false) // selector not allowed (auto-whitelist branch)
@@ -359,6 +360,24 @@ describe('Cron Scheduler Recipe Triggering', () => {
       }),
     ]);
 
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+        if (spender === '0x8888888888888888888888888888888888888888') {
+          return 1000000n;
+        }
+        return 5000000n;
+      }
+
+      return true;
+    });
+
     simulateRecipeStepMock.mockResolvedValue({
       success: false,
       errorMessage: 'execution reverted: ERC20: transfer amount exceeds allowance',
@@ -368,12 +387,12 @@ describe('Cron Scheduler Recipe Triggering', () => {
     await pollAndTriggerActiveRecipes();
 
     const allowanceWarnings = warnSpy.mock.calls
-      .flatMap((call) => call)
+      .map((call) => call.map((value) => String(value)).join(' '))
       .filter(
         (value) =>
-          typeof value === 'string' &&
-          value.includes('DCA allowance is lower than configured spend')
-      ) as string[];
+          value.includes('DCA allowance is lower than configured spend') ||
+          value.includes('DCA simulation reverted with allowance error')
+      );
 
     expect(allowanceWarnings).toHaveLength(1);
     expect(allowanceWarnings[0]).toContain('spender=0x8888888888888888888888888888888888888888');
@@ -391,9 +410,23 @@ describe('Cron Scheduler Recipe Triggering', () => {
       spenderAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     });
 
-    readContractMock
-      .mockResolvedValueOnce(5000000n) // USDC balance precheck
-      .mockResolvedValueOnce(1000000n); // USDC allowance precheck
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+        if (spender === '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
+          return 1000000n;
+        }
+        return 5000000n;
+      }
+
+      return true;
+    });
 
     findByStatusMock.mockResolvedValue([
       makeActiveRecipe({
@@ -441,7 +474,8 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     readContractMock
       .mockResolvedValueOnce(5000000n) // USDC balance precheck
-      .mockResolvedValueOnce(1000000n); // USDC allowance precheck
+      .mockResolvedValueOnce(1000000n) // USDC allowance precheck (route spender)
+      .mockResolvedValueOnce(5000000n); // USDC allowance precheck (shared executor)
 
     findByStatusMock.mockResolvedValue([
       makeActiveRecipe({

@@ -1,4 +1,5 @@
 allowBuilds:
   bufferutil: true
   keccak: true
+  unrs-resolver: set this to true or false
   utf-8-validate: true

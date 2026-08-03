@@ -98,7 +98,9 @@ function normalizeDcaUsdcAmount(rawValue: unknown, fieldName: string): string {
 
 function normalizeDcaExecutionMode(rawValue: unknown): DcaExecutionMode {
   if (rawValue === 'PREFUND') {
-    return 'PREFUND';
+    throw new Error(
+      'DCA mode PREFUND is not supported by the current keeper execution path. Use mode PULL.'
+    );
   }
   return 'PULL';
 }
@@ -136,6 +138,48 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CreateRecipePayload;
+
+    if (body.action === 'allowancePrecheck') {
+      if (!body.userAddress || body.recipeType !== 'RECURRING_DCA') {
+        return NextResponse.json(
+          { success: false, error: 'allowancePrecheck requires userAddress and recipeType=RECURRING_DCA.' },
+          { status: 400 }
+        );
+      }
+
+      const requestParameters =
+        body.parametersJson && typeof body.parametersJson === 'object'
+          ? { ...(body.parametersJson as Record<string, unknown>) }
+          : {};
+
+      const requestedTotalBudget = requestParameters.totalBudgetUsdc;
+      const requestedPerExecution = requestParameters.perExecutionAmountUsdc;
+      const requestedMode = requestParameters.mode;
+      if (requestedTotalBudget === undefined || requestedPerExecution === undefined) {
+        throw new Error('allowancePrecheck requires totalBudgetUsdc and perExecutionAmountUsdc in parametersJson.');
+      }
+
+      const totalBudgetUsdc = normalizeDcaUsdcAmount(requestedTotalBudget, 'totalBudgetUsdc');
+      const perExecutionAmountUsdc = normalizeDcaUsdcAmount(requestedPerExecution, 'perExecutionAmountUsdc');
+      if (Number(perExecutionAmountUsdc) > Number(totalBudgetUsdc)) {
+        throw new Error('perExecutionAmountUsdc must be less than or equal to totalBudgetUsdc.');
+      }
+
+      const mode = normalizeDcaExecutionMode(requestedMode);
+      const requestedSlippage = body.maxSlippageBps ?? requestParameters.maxSlippageBps;
+      const maxSlippageBps = normalizeMaxSlippageBps(requestedSlippage);
+
+      const keeperResult = await postToKeeper('/recipes/dca/allowance-precheck', {
+        userAddress: body.userAddress,
+        totalBudgetUsdc,
+        perExecutionAmountUsdc,
+        maxSlippageBps,
+        mode,
+        targetAssetSymbol: requestParameters.targetAssetSymbol,
+      });
+
+      return NextResponse.json({ success: true, allowance: keeperResult.allowance ?? null });
+    }
 
     if (body.action === 'register') {
       if (!body.userAddress || !body.recipeType) {

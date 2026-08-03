@@ -55,6 +55,7 @@ const appKitBypassHintsLogged = new Set<string>();
 const executorNotApprovedHintsLogged = new Set<string>();
 const allowanceExceededHintsLogged = new Set<string>();
 const allowancePrecheckHintsLogged = new Set<string>();
+const unsupportedDcaModeHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAIMABLE_REWARDS_CACHE_TTL_MS = 30 * 1000;
@@ -368,6 +369,21 @@ function resolveDcaAllowanceSpenderAddress(
   }
 
   return ARC_APP_KIT_DCA_USDC_SPENDER;
+}
+
+function getDcaAllowanceSpenderCandidates(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | null
+): `0x${string}`[] {
+  const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
+  return Array.from(
+    new Set([
+      runtimeSpender.toLowerCase(),
+      targetProtocol.toLowerCase(),
+      CONTRACT_ADDRESSES.sharedExecutorProxy.toLowerCase(),
+    ])
+  ).sort() as `0x${string}`[];
 }
 
 function maybeLogSelectorNotAllowedHint(
@@ -950,31 +966,46 @@ export async function pollAndTriggerActiveRecipes() {
         if (recipe.recipeType === RecipeType.RECURRING_DCA && requiredUsdcAllowanceBaseUnits !== null) {
           const dcaStateForAllowance = parseDcaConfigStateStrict(recipe.parametersJson);
           if (dcaStateForAllowance.mode !== 'PULL') {
-            requiredUsdcAllowanceBaseUnits = null;
+            const hintKey = `${recipe.id}:${dcaStateForAllowance.mode}`;
+            if (!unsupportedDcaModeHintsLogged.has(hintKey)) {
+              console.warn(
+                `[Cron Scheduler Action Required] DCA mode=${dcaStateForAllowance.mode} is not supported by current on-chain execution path ${context}. ` +
+                `Use mode=PULL and approve allowance for runtime spender, then re-register the recipe.`
+              );
+              unsupportedDcaModeHintsLogged.add(hintKey);
+            }
+            continue;
           }
         }
 
         if (recipe.recipeType === RecipeType.RECURRING_DCA && requiredUsdcAllowanceBaseUnits !== null) {
-          const spenderForAllowance = resolveDcaAllowanceSpenderAddress(
+          const spenderCandidates = getDcaAllowanceSpenderCandidates(
             callData,
             targetProtocol as `0x${string}`,
             routeSpenderAddress
           );
-          const currentAllowance = await getUsdcAllowance(
-            recipe.userAddress as `0x${string}`,
-            spenderForAllowance
-          );
+          const insufficient: Array<{ spender: `0x${string}`; allowance: bigint }> = [];
 
-          if (currentAllowance !== null && currentAllowance < requiredUsdcAllowanceBaseUnits) {
+          for (const spender of spenderCandidates) {
+            const currentAllowance = await getUsdcAllowance(recipe.userAddress as `0x${string}`, spender);
+            if (currentAllowance !== null && currentAllowance < requiredUsdcAllowanceBaseUnits) {
+              insufficient.push({ spender, allowance: currentAllowance });
+            }
+          }
+
+          if (insufficient.length > 0) {
             const configuredDcaAmount = requiredUsdcAllowanceBaseUnits.toString();
-            const hintKey = `${recipe.id}:${spenderForAllowance.toLowerCase()}:${configuredDcaAmount}`;
+            const hintKey = `${recipe.id}:${spenderCandidates.join(',')}:${configuredDcaAmount}`;
 
             if (!allowancePrecheckHintsLogged.has(hintKey)) {
+              const details = insufficient
+                .map((entry) => `spender=${entry.spender} currentAllowanceBaseUnits=${entry.allowance.toString()}`)
+                .join('; ');
               console.warn(
                 `[Cron Scheduler Action Required] DCA allowance is lower than configured spend ${context}. ` +
                 `Current configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
-                `spender=${spenderForAllowance.toLowerCase()} currentAllowanceBaseUnits=${currentAllowance.toString()} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}. ` +
-                `Increase user USDC allowance, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
+                `${details} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}. ` +
+                `Increase user USDC allowance for each spender above, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
               );
               allowancePrecheckHintsLogged.add(hintKey);
             }
@@ -1069,19 +1100,51 @@ export async function pollAndTriggerActiveRecipes() {
           }
 
           if (recipe.recipeType === RecipeType.RECURRING_DCA && isAllowanceExceededError(simulationError)) {
-            const configuredDcaAmount = requiredUsdcAllowanceBaseUnits?.toString() || '0';
+            const dcaStateForAllowance = parseDcaConfigStateStrict(recipe.parametersJson);
+            const configuredDcaAmount = dcaStateForAllowance.perExecutionAmountBaseUnits.toString();
             const allowanceTarget = resolveDcaAllowanceSpenderAddress(
               callData,
               targetProtocol as `0x${string}`,
               routeSpenderAddress
             ).toLowerCase();
+            const spenderCandidates = getDcaAllowanceSpenderCandidates(
+              callData,
+              targetProtocol as `0x${string}`,
+              routeSpenderAddress
+            );
+            const allowanceDetails: Array<{ spender: `0x${string}`; allowance: bigint | null }> = [];
+            for (const spender of spenderCandidates) {
+              allowanceDetails.push({
+                spender,
+                allowance: await getUsdcAllowance(recipe.userAddress as `0x${string}`, spender),
+              });
+            }
+
+            const requiredAmount = BigInt(configuredDcaAmount);
+            const insufficient = allowanceDetails.filter(
+              (entry) => entry.allowance !== null && entry.allowance < requiredAmount
+            );
             const hintKey = `${recipe.id}:${allowanceTarget}:${configuredDcaAmount}`;
             if (!allowanceExceededHintsLogged.has(hintKey)) {
-              console.warn(
-                `[Cron Scheduler Action Required] DCA allowance is lower than configured spend ${context}. ` +
-                `Current configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
-                `Increase user USDC allowance for spender=${allowanceTarget}, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
-              );
+              if (insufficient.length > 0) {
+                const details = insufficient
+                  .map((entry) => `spender=${entry.spender} currentAllowanceBaseUnits=${entry.allowance?.toString() || 'unknown'}`)
+                  .join('; ');
+                console.warn(
+                  `[Cron Scheduler Action Required] DCA allowance is lower than configured spend ${context}. ` +
+                  `Current configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
+                  `${details}. Increase user USDC allowance for each spender above, or re-register this recipe with a lower perExecutionAmountUsdc in parametersJson.`
+                );
+              } else {
+                const details = allowanceDetails
+                  .map((entry) => `spender=${entry.spender} currentAllowanceBaseUnits=${entry.allowance?.toString() || 'unknown'}`)
+                  .join('; ');
+                console.warn(
+                  `[Cron Scheduler Notice] DCA simulation reverted with allowance error ${context}, ` +
+                  `but known spender allowances look sufficient for configured perExecutionAmountBaseUnits=${configuredDcaAmount}. ` +
+                  `${details}. Verify SessionKeyRegistry spend limits and downstream route contract pull-path expectations.`
+                );
+              }
               allowanceExceededHintsLogged.add(hintKey);
             }
           }
@@ -1212,6 +1275,7 @@ export function __resetCronSchedulerStateForTests() {
   executorNotApprovedHintsLogged.clear();
   allowanceExceededHintsLogged.clear();
   allowancePrecheckHintsLogged.clear();
+  unsupportedDcaModeHintsLogged.clear();
   claimableRewardsCache.clear();
   usdcAllowanceCache.clear();
   dedicatedReadClientCache.clear();

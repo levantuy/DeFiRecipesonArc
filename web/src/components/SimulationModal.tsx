@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertTriangle, ArrowRight, ShieldAlert, X } from 'lucide-react';
 import {
@@ -31,6 +31,22 @@ export interface RecipeConfig {
   routeSteps: string[];
 }
 
+export interface DcaAllowancePrecheckResult {
+  runtimeSpender: `0x${string}`;
+  targetProtocolAddress: `0x${string}`;
+  callDataSelector: `0x${string}`;
+  targetAssetSymbol: string;
+  maxSlippageBps: number;
+  currentAllowanceBaseUnits: string;
+  requiredForSchedulerBaseUnits: string;
+  requiredForActivationBaseUnits: string;
+  requiredSpenders?: `0x${string}`[];
+  allowanceBySpender?: Record<string, string>;
+  isEnoughForScheduler: boolean;
+  isEnoughForActivation: boolean;
+  checkedAt: string;
+}
+
 const DCA_DEFAULT_TOTAL_BUDGET_USDC = '50';
 const DCA_DEFAULT_PER_EXECUTION_USDC = '5';
 const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9';
@@ -46,8 +62,20 @@ interface SimulationModalProps {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
       executionMode: DcaExecutionMode;
+      runtimeSpender?: `0x${string}`;
+      requiredSpenders?: `0x${string}`[];
     };
   }) => Promise<void> | void;
+  onCheckDcaAllowance?: (payload: {
+    maxSlippageBps: number;
+    dcaConfig: {
+      totalDcaBudgetUsdc: string;
+      perExecutionUsdc: string;
+      executionMode: DcaExecutionMode;
+    };
+    targetAssetSymbol?: 'USDC' | 'EURC' | 'cirBTC';
+  }) => Promise<DcaAllowancePrecheckResult>;
+  connectedAddress?: `0x${string}` | null;
   isConfirming?: boolean;
 }
 
@@ -56,12 +84,17 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   recipe,
   onClose,
   onConfirm,
+  onCheckDcaAllowance,
+  connectedAddress = null,
   isConfirming = false,
 }) => {
   const [maxSlippageBps, setMaxSlippageBps] = useState(recipe?.maxSlippageBps ?? 50);
   const [totalDcaBudgetUsdc, setTotalDcaBudgetUsdc] = useState(recipe?.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
   const [perExecutionUsdc, setPerExecutionUsdc] = useState(recipe?.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
   const [executionMode, setExecutionMode] = useState<DcaExecutionMode>(recipe?.executionMode ?? 'PULL');
+  const [allowanceCheck, setAllowanceCheck] = useState<DcaAllowancePrecheckResult | null>(null);
+  const [allowanceCheckError, setAllowanceCheckError] = useState<string>('');
+  const [isCheckingAllowance, setIsCheckingAllowance] = useState(false);
 
   useEffect(() => {
     if (recipe) {
@@ -69,16 +102,17 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       setTotalDcaBudgetUsdc(recipe.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
       setPerExecutionUsdc(recipe.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
       setExecutionMode(recipe.executionMode ?? 'PULL');
+      setAllowanceCheck(null);
+      setAllowanceCheckError('');
+      setIsCheckingAllowance(false);
     }
   }, [recipe]);
 
-  if (!isOpen || !recipe) return null;
-
-  const isDcaRecipe = recipe.recipeType === 'RECURRING_DCA';
+  const isDcaRecipe = recipe?.recipeType === 'RECURRING_DCA';
   let dcaValidationError: string | null = null;
   let estimatedRuns: bigint = 0n;
 
-  if (isDcaRecipe) {
+  if (isDcaRecipe && recipe) {
     try {
       const parsed = parseDcaActivationConfig({
         totalDcaBudgetUsdc,
@@ -89,10 +123,80 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       if (estimatedRuns <= 0n) {
         dcaValidationError = 'Estimated runs is 0. Increase budget or reduce per execution amount.';
       }
+
+      if (executionMode === 'PREFUND') {
+        dcaValidationError =
+          'PREFUND mode is not supported by current on-chain execution path. Please use PULL mode.';
+      }
     } catch (error: unknown) {
       dcaValidationError = error instanceof Error ? error.message : 'Invalid DCA configuration.';
     }
   }
+
+  const runAllowanceCheck = useCallback(async () => {
+    if (!recipe || !onCheckDcaAllowance || !isDcaRecipe || executionMode !== 'PULL' || !connectedAddress) {
+      return;
+    }
+
+    setIsCheckingAllowance(true);
+    setAllowanceCheckError('');
+
+    try {
+      const result = await onCheckDcaAllowance({
+        maxSlippageBps,
+        dcaConfig: {
+          totalDcaBudgetUsdc: totalDcaBudgetUsdc.trim(),
+          perExecutionUsdc: perExecutionUsdc.trim(),
+          executionMode,
+        },
+        targetAssetSymbol: recipe.targetAssetSymbol,
+      });
+      setAllowanceCheck(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to check allowance.';
+      setAllowanceCheckError(message);
+      setAllowanceCheck(null);
+    } finally {
+      setIsCheckingAllowance(false);
+    }
+  }, [
+    recipe,
+    onCheckDcaAllowance,
+    isDcaRecipe,
+    executionMode,
+    connectedAddress,
+    maxSlippageBps,
+    totalDcaBudgetUsdc,
+    perExecutionUsdc,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen || !isDcaRecipe || executionMode !== 'PULL' || !connectedAddress || dcaValidationError || !onCheckDcaAllowance) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void runAllowanceCheck();
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    isOpen,
+    isDcaRecipe,
+    executionMode,
+    connectedAddress,
+    dcaValidationError,
+    totalDcaBudgetUsdc,
+    perExecutionUsdc,
+    maxSlippageBps,
+    recipe?.targetAssetSymbol,
+    onCheckDcaAllowance,
+    runAllowanceCheck,
+  ]);
+
+  if (!isOpen || !recipe) return null;
 
   return (
     <AnimatePresence>
@@ -206,11 +310,12 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                             value="PREFUND"
                             checked={executionMode === 'PREFUND'}
                             onChange={() => setExecutionMode('PREFUND')}
+                            disabled
                             className="mt-0.5"
                           />
                           <span>
                             <span className="block font-semibold text-white">Prefund to Contract</span>
-                            <span className="text-slate-400">Fund total budget at activation.</span>
+                            <span className="text-slate-400">Coming soon. Not supported in current keeper execution path.</span>
                           </span>
                         </label>
                         <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-200">
@@ -242,6 +347,52 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       <div className="mt-2 rounded-lg border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200">
                         Required before scheduler enqueue: approve USDC allowance for spender {DCA_USDC_SPENDER} and transfer proxy {DCA_USDC_PROXY_SPENDER}. 
                         Policy for this UI: approve once with the full Total DCA Budget.
+                      </div>
+                      <div className="mt-2 rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="uppercase tracking-wider">Runtime Spender Allowance Precheck</span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await runAllowanceCheck();
+                            }}
+                            disabled={isCheckingAllowance || !connectedAddress || Boolean(dcaValidationError)}
+                            className="rounded border border-cyan-700/70 px-2 py-0.5 text-[10px] text-cyan-200 disabled:opacity-50"
+                          >
+                            {isCheckingAllowance ? 'Checking...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {!connectedAddress ? (
+                          <div className="text-amber-200">Connect wallet to run runtime spender allowance precheck.</div>
+                        ) : null}
+                        {allowanceCheckError ? (
+                          <div className="text-rose-300">{allowanceCheckError}</div>
+                        ) : null}
+                        {allowanceCheck ? (
+                          <div className="space-y-1">
+                            <div>Runtime spender: <span className="font-mono text-white break-all">{allowanceCheck.runtimeSpender}</span></div>
+                            <div>Target protocol: <span className="font-mono text-white break-all">{allowanceCheck.targetProtocolAddress}</span></div>
+                            <div>Allowance now: <span className="font-mono text-white">{allowanceCheck.currentAllowanceBaseUnits}</span> base units</div>
+                            {allowanceCheck.requiredSpenders && allowanceCheck.requiredSpenders.length > 0 ? (
+                              <div>
+                                Required spender approvals:
+                                {allowanceCheck.requiredSpenders.map((spender) => (
+                                  <div key={spender} className="font-mono text-white break-all">
+                                    {spender} : {allowanceCheck.allowanceBySpender?.[spender.toLowerCase()] || '0'}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            <div>Required scheduler (per run): <span className="font-mono text-white">{allowanceCheck.requiredForSchedulerBaseUnits}</span></div>
+                            <div>Required activation policy (total budget): <span className="font-mono text-white">{allowanceCheck.requiredForActivationBaseUnits}</span></div>
+                            <div className={allowanceCheck.isEnoughForScheduler ? 'text-emerald-300' : 'text-amber-200'}>
+                              Scheduler readiness: {allowanceCheck.isEnoughForScheduler ? 'READY' : 'NOT READY'}
+                            </div>
+                            <div className={allowanceCheck.isEnoughForActivation ? 'text-emerald-300' : 'text-amber-200'}>
+                              Activation policy readiness: {allowanceCheck.isEnoughForActivation ? 'READY' : 'WILL REQUIRE APPROVE'}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -340,6 +491,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       totalDcaBudgetUsdc: totalDcaBudgetUsdc.trim(),
                       perExecutionUsdc: perExecutionUsdc.trim(),
                       executionMode,
+                      runtimeSpender: allowanceCheck?.runtimeSpender,
+                      requiredSpenders: allowanceCheck?.requiredSpenders,
                     };
                   }
 

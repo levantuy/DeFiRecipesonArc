@@ -13,7 +13,12 @@ import {
   executeRecipeStepDirectly,
 } from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
-import { listExecutionLogs, registerOrActivateRecipe, updateRecipeStatus } from './api/recipeSyncApi';
+import {
+  listExecutionLogs,
+  precheckDcaAllowance,
+  registerOrActivateRecipe,
+  updateRecipeStatus,
+} from './api/recipeSyncApi';
 import { getKeeperMetricsSnapshot } from './observability/metrics';
 import { checkDbHealth, connectDb, countActiveRecipes, disconnectDb } from './db/client';
 
@@ -97,6 +102,20 @@ function createHealthServer(port: number) {
       try {
         const body = await readJsonBody(req);
         const payload = await updateRecipeStatus(body);
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
+    if (pathName === '/recipes/dca/allowance-precheck' && method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const payload = await precheckDcaAllowance(body);
         setJsonResponse(res, 200, payload);
       } catch (error: unknown) {
         setJsonResponse(res, 400, {
