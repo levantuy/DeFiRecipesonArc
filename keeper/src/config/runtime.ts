@@ -6,11 +6,39 @@ export interface RuntimeConfig {
   arcRpcFallbackUrls: string[];
   arcRpcTimeoutMs: number;
   arcRpcRetryCount: number;
+  schedulerSimulationBackoffMs: number;
+  simulationEstimateGas: boolean;
   keeperHealthPort: number;
   keeperTxRetryMaxAttempts: number;
   keeperTxReceiptTimeoutMs: number;
+  keeperTxConfirmMaxAttempts: number;
+  keeperTxConfirmRetryDelayMs: number;
+  keeperSyncConfirmationInHotPath: boolean;
+  enableUnifiedBalance: boolean;
+  enableGatewayForwarder: boolean;
+  circleClientKey: string;
+  circleClientUrl: string;
+  gatewayApiBaseUrl: string;
+  gatewayTransferPath: string;
   redisUrl: string;
   redisRetryMaxDelayMs: number;
+}
+
+function parseBooleanEnv(key: string, fallback: boolean): boolean {
+  const raw = process.env[key];
+  if (!raw || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`[Config Error] ${key} must be a boolean value (true/false). Received: ${raw}`);
 }
 
 function parseIntegerEnv(
@@ -79,9 +107,20 @@ export const RUNTIME_CONFIG: RuntimeConfig = {
   arcRpcFallbackUrls: parseUrlListEnv('ARC_TESTNET_RPC_FALLBACK_URLS', DEFAULT_ARC_RPC_FALLBACK_URLS),
   arcRpcTimeoutMs: parseIntegerEnv('ARC_RPC_TIMEOUT_MS', 15_000, 1_000, 120_000),
   arcRpcRetryCount: parseIntegerEnv('ARC_RPC_RETRY_COUNT', 2, 0, 10),
+  schedulerSimulationBackoffMs: parseIntegerEnv('SCHEDULER_SIMULATION_BACKOFF_MS', 30_000, 5_000, 300_000),
+  simulationEstimateGas: parseBooleanEnv('KEEPER_SIMULATION_ESTIMATE_GAS', false),
   keeperHealthPort: parseIntegerEnv('KEEPER_HEALTH_PORT', 8787, 1, 65535),
   keeperTxRetryMaxAttempts: parseIntegerEnv('KEEPER_TX_RETRY_MAX_ATTEMPTS', 7, 1, 10),
   keeperTxReceiptTimeoutMs: parseIntegerEnv('KEEPER_TX_RECEIPT_TIMEOUT_MS', 10_000, 1_000, 300_000),
+  keeperTxConfirmMaxAttempts: parseIntegerEnv('KEEPER_TX_CONFIRM_MAX_ATTEMPTS', 8, 1, 20),
+  keeperTxConfirmRetryDelayMs: parseIntegerEnv('KEEPER_TX_CONFIRM_RETRY_DELAY_MS', 4_000, 500, 60_000),
+  keeperSyncConfirmationInHotPath: parseBooleanEnv('KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH', false),
+  enableUnifiedBalance: parseBooleanEnv('ENABLE_UNIFIED_BALANCE', false),
+  enableGatewayForwarder: parseBooleanEnv('ENABLE_GATEWAY_FORWARDER', false),
+  circleClientKey: process.env.CIRCLE_CLIENT_KEY || '',
+  circleClientUrl: process.env.CIRCLE_CLIENT_URL || '',
+  gatewayApiBaseUrl: parseUrlEnv('GATEWAY_API_BASE_URL', 'https://gateway-api-testnet.circle.com/'),
+  gatewayTransferPath: process.env.GATEWAY_TRANSFER_PATH || '/v1/transfers',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   redisRetryMaxDelayMs: parseIntegerEnv('REDIS_RETRY_MAX_DELAY_MS', 10_000, 250, 120_000),
 };

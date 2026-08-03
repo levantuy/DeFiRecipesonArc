@@ -19,6 +19,11 @@ interface UpdateRecipeStatusPayload {
   status?: unknown;
 }
 
+interface ListExecutionLogsPayload {
+  userAddress?: unknown;
+  limit?: unknown;
+}
+
 function recipeLogContext(params: { userAddress: string; recipeType: RecipeType; recipeId?: string }): string {
   const recipeIdPart = params.recipeId ? ` recipeId=${params.recipeId}` : '';
   return `[userAddress=${params.userAddress} recipeType=${params.recipeType}${recipeIdPart}]`;
@@ -250,5 +255,96 @@ export async function updateRecipeStatus(
       status: updated.status,
       targetProtocol: updated.targetProtocol,
     },
+  };
+}
+
+function parseListExecutionLogsPayload(rawQuery: unknown): {
+  userAddress?: string;
+  limit: number;
+} {
+  if (!isRecord(rawQuery)) {
+    return { limit: 25 };
+  }
+
+  const query = rawQuery as ListExecutionLogsPayload;
+  const parsedLimit = Number(query.limit ?? 25);
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(100, Math.floor(parsedLimit)))
+    : 25;
+
+  const userAddress = query.userAddress !== undefined
+    ? normalizeAddress(query.userAddress, 'userAddress')
+    : undefined;
+
+  return {
+    userAddress,
+    limit,
+  };
+}
+
+function toRelativeTime(timestamp: Date): string {
+  const diffMs = Date.now() - timestamp.getTime();
+  if (diffMs < 60_000) {
+    return 'just now';
+  }
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) {
+    return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+export async function listExecutionLogs(
+  prisma: PrismaClient,
+  rawQuery: unknown
+): Promise<Record<string, unknown>> {
+  const payload = parseListExecutionLogsPayload(rawQuery);
+
+  const logs = await prisma.executionLog.findMany({
+    where: payload.userAddress
+      ? {
+        recipe: {
+          userAddress: payload.userAddress,
+        },
+      }
+      : undefined,
+    include: {
+      recipe: {
+        select: {
+          id: true,
+          recipeType: true,
+          userAddress: true,
+        },
+      },
+    },
+    orderBy: { simulatedAt: 'desc' },
+    take: payload.limit,
+  });
+
+  return {
+    success: true,
+    logs: logs.map((log) => {
+      const eventTimestamp = log.executedAt || log.simulatedAt;
+      return {
+        id: log.id,
+        recipeId: log.activeRecipeId,
+        recipeType: log.recipe.recipeType,
+        userAddress: log.recipe.userAddress,
+        txHash: log.txHash,
+        timestamp: toRelativeTime(eventTimestamp),
+        timestampIso: eventTimestamp.toISOString(),
+        status: log.status,
+        gasUsedUsdc: log.gasUsedUsdc ? `${log.gasUsedUsdc} USDC` : null,
+        errorMessage: log.errorMessage,
+      };
+    }),
   };
 }

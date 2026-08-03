@@ -195,3 +195,29 @@ The Keeper Engine is responsible for automated strategy execution based on time-
 1. **Phase 1 (Smart Contracts & Verification)**: Implement `SharedExecutorProxy.sol`, `RecipeGuardrail.sol`, and `SessionKeyRegistry.sol` using Foundry compiled for EVM `paris`. Run fork tests on Arc Testnet.
 2. **Phase 2 (Keeper Engine & Simulation)**: Build Node.js TypeScript worker service with BullMQ, Redis, and Viem `eth_call` static simulation engine.
 3. **Phase 3 (Frontend & Web3 Integration)**: Build Next.js 14/15 App Router web application with Wagmi v2, RainbowKit, Circle Modular Wallets, and 1-Click Simulation Modal.
+
+---
+
+## 7. Performance Architecture Update (v1.1)
+
+### 7.1 Keeper Execution Path
+- Scheduler performs pre-flight simulation once and marks jobs with preflight metadata.
+- Worker submits transactions and immediately releases concurrency slots after submit.
+- Transaction confirmation/finality is processed by a dedicated async confirmation worker.
+- Receipt timeouts and rate-limit retries are handled with queue-level retry policy and backoff.
+
+### 7.2 Observability
+- Added in-memory keeper metrics with `/metrics` endpoint:
+    - `cronCycleDurationMs` p50/p95
+    - `rpcCallsPerCycle` p50/p95
+    - queue lead time enqueue->submitted and enqueue->confirmed
+    - simulation rate-limit failure rate
+
+### 7.3 Frontend Wallet UX
+- Submit/confirm flow now uses non-blocking lifecycle:
+    - submitted immediately in UI
+    - confirmation polling runs in background
+    - timeout state escalates to background finalizer retries
+- Local session metrics expose perceived performance:
+    - time-to-submitted p95
+    - time-to-confirmed p95

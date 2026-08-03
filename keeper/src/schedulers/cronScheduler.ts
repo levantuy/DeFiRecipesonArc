@@ -1,4 +1,6 @@
 import { PrismaClient, RecipeStatus, RecipeType } from '@prisma/client';
+import { createPublicClient, http } from 'viem';
+import { arcTestnet } from 'viem/chains';
 import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
 import { publicClient, simulateRecipeStep } from '../simulation/staticSimulationEngine';
 import {
@@ -7,6 +9,8 @@ import {
   buildRebalancerCallData,
 } from '../simulation/recipePayloads';
 import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
+import { RUNTIME_CONFIG } from '../config/runtime';
+import { incrementCounter, readCounter, recordCronCycle } from '../observability/metrics';
 const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompounderLendingBorrowing;
 import { getKeeperAccount } from '../index';
 
@@ -17,7 +21,8 @@ const DEFAULT_DCA_USDC_BASE_UNITS = 50_000_000n; // 50 USDC
 const MAX_USDC_SPEND_PER_TX_BASE_UNITS = 500_000_000n; // 500 USDC
 const MIN_CHECK_INTERVAL_HOURS = 1;
 const MAX_CHECK_INTERVAL_HOURS = 24 * 30;
-const SIMULATION_RATE_LIMIT_BACKOFF_MS = 90_000;
+const SIMULATION_RATE_LIMIT_BACKOFF_MS = RUNTIME_CONFIG.schedulerSimulationBackoffMs;
+const dedicatedReadClientCache = new Map<string, ReturnType<typeof createPublicClient>>();
 
 // Current deployed LendingBorrowing contract used by AUTO_COMPOUNDER on Arc Testnet.
 // Keep this explicit so an old recipe record cannot accidentally point the Keeper
@@ -41,6 +46,8 @@ const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
 const executorNotApprovedHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
+const CLAIMABLE_REWARDS_CACHE_TTL_MS = 30 * 1000;
+const claimableRewardsCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
 
 const AUTO_COMPOUNDER_REWARDS_ABI = [
   {
@@ -150,6 +157,32 @@ function normalizeErrorMessage(errorMessage: string): string {
   return errorMessage.toLowerCase();
 }
 
+function getArcRpcUrls(): string[] {
+  const urls = [RUNTIME_CONFIG.arcRpcUrl, ...RUNTIME_CONFIG.arcRpcFallbackUrls]
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return Array.from(new Set(urls));
+}
+
+function getDedicatedReadClient(rpcUrl: string) {
+  const cached = dedicatedReadClientCache.get(rpcUrl);
+  if (cached) {
+    return cached;
+  }
+
+  const client = createPublicClient({
+    chain: arcTestnet,
+    transport: http(rpcUrl, {
+      timeout: RUNTIME_CONFIG.arcRpcTimeoutMs,
+      retryCount: 0,
+    }),
+  });
+
+  dedicatedReadClientCache.set(rpcUrl, client);
+  return client;
+}
+
 function isSimulationRateLimitError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   const hasHttp429 = /\b429\b/.test(normalized) && normalized.includes('too many requests');
@@ -160,6 +193,58 @@ function isSimulationRateLimitError(errorMessage: string): boolean {
     normalized.includes('-32011') ||
     hasHttp429
   );
+}
+
+function isRetryableRpcReadError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return (
+    isSimulationRateLimitError(errorMessage) ||
+    normalized.includes('rpc request failed') ||
+    normalized.includes('timeout') ||
+    normalized.includes('timed out') ||
+    normalized.includes('network error') ||
+    normalized.includes('socket hang up') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('503') ||
+    normalized.includes('temporarily unavailable')
+  );
+}
+
+async function withRpcReadFailover<T>(
+  operationLabel: string,
+  operation: (client: ReturnType<typeof createPublicClient>) => Promise<T>
+): Promise<T> {
+  const errors: string[] = [];
+
+  try {
+    incrementCounter('rpc.total');
+    return await operation(publicClient as ReturnType<typeof createPublicClient>);
+  } catch (primaryError: unknown) {
+    const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
+    errors.push(`[fallback-transport] ${message}`);
+
+    if (!isRetryableRpcReadError(message)) {
+      throw primaryError;
+    }
+  }
+
+  const rpcUrls = getArcRpcUrls();
+  for (const rpcUrl of rpcUrls) {
+    try {
+      incrementCounter('rpc.total');
+      return await operation(getDedicatedReadClient(rpcUrl));
+    } catch (endpointError: unknown) {
+      const message = endpointError instanceof Error ? endpointError.message : String(endpointError);
+      errors.push(`[${rpcUrl}] ${message}`);
+
+      if (!isRetryableRpcReadError(message)) {
+        throw endpointError;
+      }
+    }
+  }
+
+  const joinedErrors = errors.join(' | ');
+  throw new Error(`${operationLabel} failed across all RPC endpoints. ${joinedErrors}`);
 }
 
 function isUnauthorizedExecutorError(errorMessage: string): boolean {
@@ -250,6 +335,7 @@ async function withRpcRateLimitHandling<T>(
     const message = error instanceof Error ? error.message : String(error);
 
     if (isSimulationRateLimitError(message)) {
+      incrementCounter('rpc.rateLimited');
       simulationBackoffUntilMs = Date.now() + SIMULATION_RATE_LIMIT_BACKOFF_MS;
       console.warn(
         `[Cron Scheduler Notice] Arc RPC rate limit detected. ` +
@@ -268,7 +354,8 @@ async function getGuardrailOwnerAddress(): Promise<`0x${string}`> {
   }
 
   const owner = (await withRpcRateLimitHandling(() =>
-    publicClient.readContract({
+    withRpcReadFailover('getGuardrailOwnerAddress', async (client) =>
+      client.readContract({
       address: CONTRACT_ADDRESSES.recipeGuardrail,
       abi: [
         {
@@ -282,6 +369,7 @@ async function getGuardrailOwnerAddress(): Promise<`0x${string}`> {
       functionName: 'owner',
       args: [],
     })
+    )
   )) as `0x${string}`;
 
   guardrailOwnerCache.owner = owner;
@@ -297,7 +385,9 @@ async function targetProtocolHasCode(targetProtocol: `0x${string}`): Promise<boo
   }
 
   const bytecode = await withRpcRateLimitHandling(() =>
-    publicClient.getBytecode({ address: targetProtocol })
+    withRpcReadFailover('targetProtocolHasCode', async (client) =>
+      client.getBytecode({ address: targetProtocol })
+    )
   );
   const hasCode = Boolean(bytecode && bytecode !== '0x');
   protocolCodeCache.set(targetProtocol, { hasCode, checkedAtMs: now });
@@ -316,12 +406,14 @@ async function isSelectorAllowedForProtocol(
   }
 
   const isAllowed = (await withRpcRateLimitHandling(() =>
-    publicClient.readContract({
+    withRpcReadFailover('isSelectorAllowedForProtocol', async (client) =>
+      client.readContract({
       address: CONTRACT_ADDRESSES.recipeGuardrail,
       abi: RECIPE_GUARDRAIL_ABI,
       functionName: 'isSelectorAllowed',
       args: [targetProtocol, selectorHex],
     })
+    )
   )) as boolean;
 
   selectorAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
@@ -337,12 +429,14 @@ async function isProtocolWhitelisted(targetProtocol: `0x${string}`): Promise<boo
   }
 
   const isAllowed = (await withRpcRateLimitHandling(() =>
-    publicClient.readContract({
+    withRpcReadFailover('isProtocolWhitelisted', async (client) =>
+      client.readContract({
       address: CONTRACT_ADDRESSES.recipeGuardrail,
       abi: RECIPE_GUARDRAIL_ABI,
       functionName: 'isProtocolWhitelisted',
       args: [targetProtocol],
     })
+    )
   )) as boolean;
 
   protocolAllowedCache.set(cacheKey, { isAllowed, checkedAtMs: now });
@@ -353,14 +447,26 @@ async function getClaimableRewards(
   targetProtocol: `0x${string}`,
   userAddress: `0x${string}`
 ): Promise<bigint> {
-  return (await withRpcRateLimitHandling(() =>
-    publicClient.readContract({
+  const cacheKey = `${targetProtocol.toLowerCase()}:${userAddress.toLowerCase()}`;
+  const now = Date.now();
+  const cached = claimableRewardsCache.get(cacheKey);
+  if (cached && now - cached.checkedAtMs < CLAIMABLE_REWARDS_CACHE_TTL_MS) {
+    return cached.amount;
+  }
+
+  const amount = (await withRpcRateLimitHandling(() =>
+    withRpcReadFailover('getClaimableRewards', async (client) =>
+      client.readContract({
       address: targetProtocol,
       abi: AUTO_COMPOUNDER_REWARDS_ABI,
       functionName: 'claimableRewards',
       args: [userAddress],
     })
+    )
   )) as bigint;
+
+  claimableRewardsCache.set(cacheKey, { amount, checkedAtMs: now });
+  return amount;
 }
 
 /**
@@ -374,6 +480,8 @@ export async function pollAndTriggerActiveRecipes() {
   }
 
   isPolling = true;
+  const cycleStartedAtMs = Date.now();
+  const rpcCountAtStart = readCounter('rpc.total');
 
   try {
     const nowMs = Date.now();
@@ -504,14 +612,19 @@ export async function pollAndTriggerActiveRecipes() {
         }
 
         // Pre-flight static simulation via eth_call
-        const simResult = await simulateRecipeStep({
-          userAddress: recipe.userAddress as `0x${string}`,
-          executorProxyAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
-          targetProtocolAddress: targetProtocol,
-          callData,
-          minAmountOut: BigInt(minAmountOut),
-          keeperAddress: keeperAccount.address,
-        });
+        const simResult = await simulateRecipeStep(
+          {
+            userAddress: recipe.userAddress as `0x${string}`,
+            executorProxyAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
+            targetProtocolAddress: targetProtocol,
+            callData,
+            minAmountOut: BigInt(minAmountOut),
+            keeperAddress: keeperAccount.address,
+          },
+          {
+            includeGasEstimate: RUNTIME_CONFIG.simulationEstimateGas,
+          }
+        );
 
         if (!simResult.success) {
           const simulationError = simResult.errorMessage || 'Unknown simulation error';
@@ -554,6 +667,7 @@ export async function pollAndTriggerActiveRecipes() {
           }
 
           if (isSimulationRateLimitError(simulationError)) {
+            incrementCounter('simulation.rateLimitFailures');
             simulationBackoffUntilMs = Date.now() + SIMULATION_RATE_LIMIT_BACKOFF_MS;
             console.warn(
               `[Cron Scheduler Notice] Arc RPC rate limit detected. Pausing new simulation calls for ` +
@@ -575,11 +689,15 @@ export async function pollAndTriggerActiveRecipes() {
           callData,
           minAmountOut,
           keeperAddress: keeperAccount.address,
+          queueEnqueuedAtMs: Date.now(),
+          preflightSimulationPassed: simResult.success,
+          preflightEstimatedGasUsdc: simResult.estimatedGasUsdc?.toString(),
         };
 
         const executionBucket = Math.floor(now.getTime() / (intervalHours * 60 * 60 * 1000));
         const jobId = `execute-${recipe.id}-${executionBucket}`;
         await recipeQueue.add(jobId, jobData, { jobId });
+        incrementCounter('queue.enqueued');
         console.log(`[Cron Scheduler] Enqueued recipe ${context} jobId=${jobId}`);
       } catch (recipeErr: unknown) {
         const recipeErrorMessage = recipeErr instanceof Error ? recipeErr.message : 'Unknown recipe scheduling error';
@@ -590,6 +708,9 @@ export async function pollAndTriggerActiveRecipes() {
     const message = err instanceof Error ? err.message : 'Unknown scheduler error';
     console.warn(`[Cron Scheduler Error] ${message}`);
   } finally {
+    const cycleDurationMs = Date.now() - cycleStartedAtMs;
+    const cycleRpcCalls = Math.max(0, readCounter('rpc.total') - rpcCountAtStart);
+    recordCronCycle(cycleDurationMs, cycleRpcCalls);
     isPolling = false;
   }
 }
@@ -637,4 +758,26 @@ export function stopCronScheduler() {
     clearTimeout(cronTimer);
     cronTimer = null;
   }
+}
+
+export function __resetCronSchedulerStateForTests() {
+  simulationBackoffUntilMs = 0;
+  isPolling = false;
+  cronRunning = false;
+  lastSimulationBackoffNoticeMs = 0;
+  hasLoggedUnauthorizedExecutorHint = false;
+
+  unauthorizedKeeperHintsLogged.clear();
+  protocolCodeCache.clear();
+  protocolNoCodeWarned.clear();
+  selectorAllowedCache.clear();
+  selectorNotAllowedHintsLogged.clear();
+  protocolAllowedCache.clear();
+  protocolNotAllowedHintsLogged.clear();
+  executorNotApprovedHintsLogged.clear();
+  claimableRewardsCache.clear();
+  dedicatedReadClientCache.clear();
+
+  guardrailOwnerCache.owner = null;
+  guardrailOwnerCache.checkedAtMs = 0;
 }

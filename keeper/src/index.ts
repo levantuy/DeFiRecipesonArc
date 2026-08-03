@@ -6,9 +6,16 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES } from './config/contracts';
 import { getKeeperPrivateKey, RUNTIME_CONFIG } from './config/runtime';
-import { recipeQueue, recipeWorker, executeRecipeStepDirectly } from './schedulers/queueScheduler';
+import {
+  recipeQueue,
+  recipeWorker,
+  txConfirmationQueue,
+  txConfirmationWorker,
+  executeRecipeStepDirectly,
+} from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
-import { registerOrActivateRecipe, updateRecipeStatus } from './api/recipeSyncApi';
+import { listExecutionLogs, registerOrActivateRecipe, updateRecipeStatus } from './api/recipeSyncApi';
+import { getKeeperMetricsSnapshot } from './observability/metrics';
 
 export const prisma = new PrismaClient();
 
@@ -102,6 +109,31 @@ function createHealthServer(port: number) {
       return;
     }
 
+    if (pathName === '/recipes/logs' && method === 'GET') {
+      try {
+        const payload = await listExecutionLogs(prisma, {
+          userAddress: requestUrl.searchParams.get('userAddress') || undefined,
+          limit: requestUrl.searchParams.get('limit') || undefined,
+        });
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
+    if (pathName === '/metrics' && method === 'GET') {
+      setJsonResponse(res, 200, {
+        status: 'ok',
+        service: 'keeper',
+        metrics: getKeeperMetricsSnapshot(),
+      });
+      return;
+    }
+
     if (pathName !== '/healthz') {
       setJsonResponse(res, 404, { message: 'Not found' });
       return;
@@ -167,7 +199,9 @@ export async function startKeeperEngine() {
     console.log('\n[Keeper Engine] Shutting down gracefully...');
     stopCronScheduler();
     await recipeWorker.close();
+    await txConfirmationWorker.close();
     await recipeQueue.close();
+    await txConfirmationQueue.close();
     await new Promise<void>((resolve) => {
       healthServer.close(() => resolve());
     });
@@ -179,7 +213,9 @@ export async function startKeeperEngine() {
     console.log('\n[Keeper Engine] Received SIGTERM. Shutting down...');
     stopCronScheduler();
     await recipeWorker.close();
+    await txConfirmationWorker.close();
     await recipeQueue.close();
+    await txConfirmationQueue.close();
     await new Promise<void>((resolve) => {
       healthServer.close(() => resolve());
     });

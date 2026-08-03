@@ -9,7 +9,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:perf": "npm run build && node dist/benchmarks/keeperPerformanceBenchmark.js",
+    "alerts:check": "npm run build && node dist/observability/monitorAlerts.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

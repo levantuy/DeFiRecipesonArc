@@ -1,6 +1,13 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { RecipeExecutionJobData, executeRecipeStepDirectly } from '../schedulers/queueScheduler';
+process.env.KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH = 'true';
+
 import * as simulationEngine from '../simulation/staticSimulationEngine';
+import {
+  RecipeExecutionJobData,
+  executeRecipeStepDirectly,
+  txConfirmationQueue,
+} from '../schedulers/queueScheduler';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
 const { writeContractMock, createWalletClientMock } = vi.hoisted(() => {
   return {
@@ -22,6 +29,7 @@ vi.mock('viem', async () => {
 describe('Queue Scheduler & Job Execution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    RUNTIME_CONFIG.keeperSyncConfirmationInHotPath = true;
   });
 
   const sampleJobData: RecipeExecutionJobData = {
@@ -119,5 +127,32 @@ describe('Queue Scheduler & Job Execution', () => {
     expect(result.txHash).toBe(
       '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     );
+  });
+
+  it('should enqueue async confirmation and not wait for receipt in hot path', async () => {
+    process.env.KEEPER_PRIVATE_KEY = `0x${'3'.repeat(64)}`;
+    RUNTIME_CONFIG.keeperSyncConfirmationInHotPath = false;
+
+    vi.spyOn(simulationEngine, 'simulateRecipeStep').mockResolvedValueOnce({
+      success: true,
+      estimatedGasUsdc: 91000n,
+    });
+
+    writeContractMock.mockResolvedValue(
+      '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    );
+    createWalletClientMock.mockReturnValue({
+      writeContract: writeContractMock,
+    });
+
+    const queueAddSpy = vi.spyOn(txConfirmationQueue, 'add').mockResolvedValueOnce({} as never);
+    const waitForReceiptSpy = vi.spyOn(simulationEngine.publicClient, 'waitForTransactionReceipt');
+
+    const result = await executeRecipeStepDirectly(sampleJobData);
+
+    expect(result.status).toBe('SUBMITTED_ASYNC');
+    expect(result.confirmationMode).toBe('async');
+    expect(queueAddSpy).toHaveBeenCalledTimes(1);
+    expect(waitForReceiptSpy).not.toHaveBeenCalled();
   });
 });

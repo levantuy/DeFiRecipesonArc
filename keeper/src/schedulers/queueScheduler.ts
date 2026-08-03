@@ -4,9 +4,14 @@ import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { PrismaClient, ExecutionStatus } from '@prisma/client';
-import { simulateRecipeStep, SimulationRequest } from '../simulation/staticSimulationEngine';
+import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 import { ARC_TESTNET_CONFIG, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { getKeeperPrivateKey, RUNTIME_CONFIG } from '../config/runtime';
+import {
+  incrementCounter,
+  recordQueueLeadTimeToConfirmed,
+  recordQueueLeadTimeToSubmitted,
+} from '../observability/metrics';
 
 const prisma = new PrismaClient();
 
@@ -90,14 +95,9 @@ function getRetryDelayMs(attempt: number): number {
 }
 
 function getRpcCandidates(): string[] {
-  const urls = [
-    RUNTIME_CONFIG.arcRpcUrl,
-    ...RUNTIME_CONFIG.arcRpcFallbackUrls,
-  ];
+  const urls = [RUNTIME_CONFIG.arcRpcUrl, ...RUNTIME_CONFIG.arcRpcFallbackUrls];
 
-  return Array.from(
-    new Set(urls.map((entry) => entry.trim()).filter((entry) => entry.length > 0))
-  );
+  return Array.from(new Set(urls.map((entry) => entry.trim()).filter((entry) => entry.length > 0)));
 }
 
 export interface RecipeExecutionJobData {
@@ -107,8 +107,20 @@ export interface RecipeExecutionJobData {
   executorProxyAddress: `0x${string}`;
   targetProtocolAddress: `0x${string}`;
   callData: `0x${string}`;
-  minAmountOut: string; // BigInt serialized as string
+  minAmountOut: string;
   keeperAddress: `0x${string}`;
+  queueEnqueuedAtMs?: number;
+  preflightSimulationPassed?: boolean;
+  preflightEstimatedGasUsdc?: string;
+}
+
+export interface TxConfirmationJobData {
+  recipeId: string;
+  txHash: `0x${string}`;
+  executionLogId: string | null;
+  queueEnqueuedAtMs?: number;
+  txSubmittedAtMs: number;
+  preflightEstimatedGasUsdc?: string;
 }
 
 function getRecipeLogContext(data: RecipeExecutionJobData): string {
@@ -123,6 +135,85 @@ export const recipeQueue = new Queue<RecipeExecutionJobData>('recipe-execution-q
   },
 });
 
+export const txConfirmationQueue = new Queue<TxConfirmationJobData>('tx-confirmation-queue', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    removeOnComplete: 500,
+    removeOnFail: 1000,
+  },
+});
+
+async function markExecutionReverted(executionLogId: string | null, message: string) {
+  if (!executionLogId) {
+    return;
+  }
+
+  await prisma.executionLog
+    .update({
+      where: { id: executionLogId },
+      data: {
+        status: ExecutionStatus.REVERTED,
+        errorMessage: message,
+      },
+    })
+    .catch(() => {
+      console.warn('[Keeper Engine] Failed to persist reverted execution log.');
+    });
+}
+
+async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<void> {
+  incrementCounter('rpc.total');
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash: data.txHash,
+    timeout: RUNTIME_CONFIG.keeperTxReceiptTimeoutMs,
+  });
+
+  if (receipt.status !== 'success') {
+    await markExecutionReverted(data.executionLogId, `Transaction failed on-chain: ${data.txHash}`);
+    throw new Error(`Transaction failed on-chain: ${data.txHash}`);
+  }
+
+  if (data.executionLogId) {
+    await prisma.executionLog
+      .update({
+        where: { id: data.executionLogId },
+        data: {
+          status: ExecutionStatus.CONFIRMED,
+          gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
+        },
+      })
+      .catch(() => {
+        console.warn('[Keeper Engine] Failed to persist confirmed execution log.');
+      });
+  }
+
+  await prisma.activeRecipe
+    .update({
+      where: { id: data.recipeId },
+      data: { lastExecutedAt: new Date() },
+    })
+    .catch(() => {
+      console.warn(`[Keeper Engine] Failed to update lastExecutedAt for recipeId=${data.recipeId}.`);
+    });
+
+  incrementCounter('queue.confirmed');
+  if (data.queueEnqueuedAtMs) {
+    recordQueueLeadTimeToConfirmed(Date.now() - data.queueEnqueuedAtMs);
+  }
+}
+
+async function enqueueConfirmation(data: TxConfirmationJobData) {
+  const jobId = `confirm-${data.recipeId}-${data.txHash}`;
+  await txConfirmationQueue.add(jobId, data, {
+    jobId,
+    attempts: RUNTIME_CONFIG.keeperTxConfirmMaxAttempts,
+    backoff: {
+      type: 'fixed',
+      delay: RUNTIME_CONFIG.keeperTxConfirmRetryDelayMs,
+    },
+  });
+}
+
 /**
  * Direct execution function (used by Worker or direct invocation)
  */
@@ -130,13 +221,11 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   const context = getRecipeLogContext(data);
   console.log(`[Keeper Engine] Executing step ${context}`);
 
-  // Create Execution Log in Database if activeRecipe exists
   let executionLogId: string | null = null;
   let hasPersistedRecipe = false;
+
   try {
-    const recipeExists = await prisma.activeRecipe.findUnique({
-      where: { id: data.recipeId },
-    });
+    const recipeExists = await prisma.activeRecipe.findUnique({ where: { id: data.recipeId } });
     if (recipeExists) {
       hasPersistedRecipe = true;
       const log = await prisma.executionLog.create({
@@ -151,37 +240,46 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     // Ignore DB log creation error if recipe is non-persisted or mock
   }
 
-  // Step 1: Pre-flight static simulation via eth_call
-  const simReq: SimulationRequest = {
-    userAddress: data.userAddress,
-    executorProxyAddress: data.executorProxyAddress,
-    targetProtocolAddress: data.targetProtocolAddress,
-    callData: data.callData,
-    minAmountOut: BigInt(data.minAmountOut),
-    keeperAddress: data.keeperAddress,
-  };
+  const runDynamicSimulation = !data.preflightSimulationPassed;
+  let estimatedGasUsdc = data.preflightEstimatedGasUsdc;
 
-  const simResult = await simulateRecipeStep(simReq);
+  if (runDynamicSimulation) {
+    const simReq: SimulationRequest = {
+      userAddress: data.userAddress,
+      executorProxyAddress: data.executorProxyAddress,
+      targetProtocolAddress: data.targetProtocolAddress,
+      callData: data.callData,
+      minAmountOut: BigInt(data.minAmountOut),
+      keeperAddress: data.keeperAddress,
+    };
 
-  if (!simResult.success) {
-    console.error(`[Simulation Failed] ${context}: ${simResult.errorMessage}`);
-    if (executionLogId) {
-      await prisma.executionLog.update({
-        where: { id: executionLogId },
-        data: {
-          status: ExecutionStatus.SIMULATION_FAILED,
-          errorMessage: simResult.errorMessage,
-        },
-      }).catch(() => {
-        console.warn('[Keeper Engine] Failed to persist simulation failure log.');
-      });
+    const simResult = await simulateRecipeStep(simReq, {
+      includeGasEstimate: RUNTIME_CONFIG.simulationEstimateGas,
+    });
+
+    if (!simResult.success) {
+      console.error(`[Simulation Failed] ${context}: ${simResult.errorMessage}`);
+      if (executionLogId) {
+        await prisma.executionLog
+          .update({
+            where: { id: executionLogId },
+            data: {
+              status: ExecutionStatus.SIMULATION_FAILED,
+              errorMessage: simResult.errorMessage,
+            },
+          })
+          .catch(() => {
+            console.warn('[Keeper Engine] Failed to persist simulation failure log.');
+          });
+      }
+      throw new Error(`Simulation Failed: ${simResult.errorMessage}`);
     }
-    throw new Error(`Simulation Failed: ${simResult.errorMessage}`);
+
+    if (simResult.estimatedGasUsdc) {
+      estimatedGasUsdc = simResult.estimatedGasUsdc.toString();
+    }
   }
 
-  console.log(`[Simulation Passed] Gas Estimate: ${simResult.estimatedGasUsdc} USDC native units`);
-
-  // Step 2: Relayer Transaction Submission with Viem & Exponential Backoff Retry Policy
   const maxRetries = RUNTIME_CONFIG.keeperTxRetryMaxAttempts;
   let attempt = 0;
   let hash: `0x${string}` | null = null;
@@ -204,6 +302,7 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     });
 
     try {
+      incrementCounter('rpc.total');
       console.log(`[Tx Relayer] ${context} attempt ${attempt}/${maxRetries} submitting via ${rpcUrl}...`);
       hash = await walletClient.writeContract({
         address: data.executorProxyAddress,
@@ -211,11 +310,15 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
         functionName: 'executeRecipeStep',
         args: [data.userAddress, data.targetProtocolAddress, data.callData, BigInt(data.minAmountOut)],
       });
-      break; // Success, exit retry loop
+      break;
     } catch (err: unknown) {
       const message = getErrorMessage(err);
       lastError = err instanceof Error ? err : new Error(message);
       console.warn(`[Tx Relayer Warning] ${context} attempt ${attempt} failed: ${message}`);
+
+      if (isRateLimitError(err)) {
+        incrementCounter('rpc.rateLimited');
+      }
 
       const canRetry = isRetryableRpcError(err) && attempt < maxRetries;
       if (canRetry) {
@@ -235,77 +338,71 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
 
   if (!hash) {
     console.error(`[Tx Execution Failed] ${context} after ${maxRetries} attempts: ${lastError?.message}`);
-    if (executionLogId) {
-      await prisma.executionLog.update({
-        where: { id: executionLogId },
-        data: {
-          status: ExecutionStatus.REVERTED,
-          errorMessage: lastError?.message || 'Execution failed after retries',
-        },
-      }).catch(() => {
-        console.warn('[Keeper Engine] Failed to persist reverted execution log.');
-      });
-    }
+    await markExecutionReverted(executionLogId, lastError?.message || 'Execution failed after retries');
     throw lastError || new Error('Tx broadcast failed after max retries');
   }
 
   console.log(`[Tx Submitted] ${context} txHash=${hash}`);
+  incrementCounter('queue.submitted');
+
+  if (data.queueEnqueuedAtMs) {
+    recordQueueLeadTimeToSubmitted(Date.now() - data.queueEnqueuedAtMs);
+  }
 
   if (executionLogId) {
-    await prisma.executionLog.update({
-      where: { id: executionLogId },
-      data: {
-        status: ExecutionStatus.SUBMITTED,
-        txHash: hash,
-        executedAt: new Date(),
-      },
-    }).catch(() => {
-      console.warn('[Keeper Engine] Failed to persist submitted execution log.');
-    });
-  }
-
-  // Step 3: Verify Sub-Second Finality on Arc Network
-  try {
-    const { publicClient } = await import('../simulation/staticSimulationEngine');
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash,
-      timeout: RUNTIME_CONFIG.keeperTxReceiptTimeoutMs,
-    });
-    console.log(`[Tx Finalized] ${context} block=${receipt.blockNumber} status=${receipt.status}`);
-
-    if (executionLogId && receipt.status === 'success') {
-      await prisma.executionLog.update({
+    await prisma.executionLog
+      .update({
         where: { id: executionLogId },
         data: {
-          status: ExecutionStatus.CONFIRMED,
-          gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
+          status: ExecutionStatus.SUBMITTED,
+          txHash: hash,
+          executedAt: new Date(),
         },
-      }).catch(() => { });
-    }
-  } catch (receiptErr: unknown) {
-    console.warn(`[Finality Warning] ${context} could not wait for tx receipt ${hash}: ${getErrorMessage(receiptErr)}`);
+      })
+      .catch(() => {
+        console.warn('[Keeper Engine] Failed to persist submitted execution log.');
+      });
   }
 
-  // Update ActiveRecipe lastExecutedAt for persisted recipes.
-  if (hasPersistedRecipe) {
-    await prisma.activeRecipe.update({
-      where: { id: data.recipeId },
-      data: { lastExecutedAt: new Date() },
-    }).catch(() => {
-      console.warn(`[Keeper Engine] Failed to update lastExecutedAt ${context}.`);
-    });
+  const confirmationPayload: TxConfirmationJobData = {
+    recipeId: data.recipeId,
+    txHash: hash,
+    executionLogId,
+    queueEnqueuedAtMs: data.queueEnqueuedAtMs,
+    txSubmittedAtMs: Date.now(),
+    preflightEstimatedGasUsdc: estimatedGasUsdc,
+  };
+
+  if (RUNTIME_CONFIG.keeperSyncConfirmationInHotPath) {
+    await waitForReceiptAndPersist(confirmationPayload);
+
+    return {
+      status: 'SIMULATED_AND_EXECUTED',
+      txHash: hash,
+      gasUsedUsdc: estimatedGasUsdc,
+      confirmationMode: 'sync',
+    };
+  }
+
+  await enqueueConfirmation(confirmationPayload);
+
+  if (!hasPersistedRecipe) {
+    return {
+      status: 'SUBMITTED_ASYNC',
+      txHash: hash,
+      gasUsedUsdc: estimatedGasUsdc,
+      confirmationMode: 'async',
+    };
   }
 
   return {
-    status: 'SIMULATED_AND_EXECUTED',
+    status: 'SUBMITTED_ASYNC',
     txHash: hash,
-    gasUsedUsdc: simResult.estimatedGasUsdc?.toString(),
+    gasUsedUsdc: estimatedGasUsdc,
+    confirmationMode: 'async',
   };
 }
 
-/**
- * BullMQ Worker processing recipe execution jobs.
- */
 export const recipeWorker = new Worker<RecipeExecutionJobData>(
   'recipe-execution-queue',
   async (job: Job<RecipeExecutionJobData>) => {
@@ -314,10 +411,52 @@ export const recipeWorker = new Worker<RecipeExecutionJobData>(
   },
   {
     connection: redisConnection,
-    concurrency: 5,
+    concurrency: 8,
+  }
+);
+
+export const txConfirmationWorker = new Worker<TxConfirmationJobData>(
+  'tx-confirmation-queue',
+  async (job: Job<TxConfirmationJobData>) => {
+    const context = `[recipeId=${job.data.recipeId} txHash=${job.data.txHash}]`;
+    console.log(`[BullMQ Confirm Worker] Processing job ${job.id} ${context}`);
+
+    try {
+      await waitForReceiptAndPersist(job.data);
+      return {
+        status: 'CONFIRMED',
+        txHash: job.data.txHash,
+      };
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      const isRetryable = isRetryableRpcError(error);
+      const attemptsMade = job.attemptsMade + 1;
+      const maxAttempts = job.opts.attempts || 1;
+
+      if (isRetryable && attemptsMade < maxAttempts) {
+        if (message.toLowerCase().includes('timeout')) {
+          incrementCounter('queue.confirmationTimeouts');
+        }
+        console.warn(
+          `[BullMQ Confirm Worker] Retryable confirmation error ${context} attempt=${attemptsMade}/${maxAttempts}: ${message}`
+        );
+        throw error;
+      }
+
+      await markExecutionReverted(job.data.executionLogId, message);
+      throw error;
+    }
+  },
+  {
+    connection: redisConnection,
+    concurrency: 12,
   }
 );
 
 recipeWorker.on('error', () => {
+  // Silence worker loop connection warnings to keep console clean
+});
+
+txConfirmationWorker.on('error', () => {
   // Silence worker loop connection warnings to keep console clean
 });

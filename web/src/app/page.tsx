@@ -19,17 +19,22 @@ const DEFAULT_MAX_USDC_SPEND_PER_TX = '500';
 const DEFAULT_SESSION_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
 const TX_SEND_MAX_RETRIES = 7;
 const TX_SEND_BASE_DELAY_MS = 1500;
-const TX_CONFIRM_MAX_RETRIES = 7;
 const TX_RETRY_MAX_DELAY_MS = 12000;
 const TX_ACTION_COOLDOWN_MS = 6000;
+const TX_CONFIRM_POLL_INTERVAL_MS = 2500;
+const TX_CONFIRM_TIMEOUT_MS = 60_000;
+const TX_CONFIRM_BACKGROUND_MAX_ROUNDS = 2;
+const TX_CONFIRM_BACKGROUND_DELAY_MS = 15_000;
 
 type RecipeLifecycleStatus = 'inactive' | 'active' | 'paused' | 'revoked';
+type TxLifecycleStatus = 'idle' | 'submitted' | 'confirmed' | 'timeout' | 'failed' | 'already-valid';
 
 interface ActiveRecipeState {
   id: string;
   recipeType: string;
   targetProtocolAddress: `0x${string}`;
   status: RecipeLifecycleStatus;
+  txLifecycleStatus: TxLifecycleStatus;
   maxSlippageBps: number;
   maxUsdcSpendPerTx: string;
   validUntil: string;
@@ -39,6 +44,12 @@ interface ActiveRecipeState {
 interface DelegationSetupResult {
   txHash: `0x${string}` | null;
   alreadyValid: boolean;
+  submittedAtMs: number | null;
+}
+
+interface FrontendPerformanceMetrics {
+  timeToSubmittedMs: number[];
+  timeToConfirmedMs: number[];
 }
 
 function isAddress(value: string): value is `0x${string}` {
@@ -77,6 +88,22 @@ function isRateLimitError(error: unknown): boolean {
   );
 }
 
+function isPendingReceiptError(error: unknown): boolean {
+  const serialized =
+    error instanceof Error
+      ? `${error.name} ${error.message}`
+      : typeof error === 'string'
+        ? error
+        : JSON.stringify(error);
+
+  const normalized = serialized.toLowerCase();
+  return (
+    normalized.includes('transactionreceiptnotfounderror') ||
+    normalized.includes('could not find transaction receipt') ||
+    normalized.includes('not found')
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -112,6 +139,10 @@ export default function Home() {
   const [isActivating, setIsActivating] = useState(false);
   const [isUpdatingDelegation, setIsUpdatingDelegation] = useState(false);
   const [lastActionAt, setLastActionAt] = useState<number>(0);
+  const [frontendMetrics, setFrontendMetrics] = useState<FrontendPerformanceMetrics>({
+    timeToSubmittedMs: [],
+    timeToConfirmedMs: [],
+  });
   const { isConnected, address } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
@@ -124,6 +155,25 @@ export default function Home() {
   const configErrorMessage = keeperSessionKeyAddress
     ? ''
     : 'Missing NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS in web/.env. Production delegation is blocked until this value is configured and dev server restarted.';
+
+  const pushFrontendMetric = (field: keyof FrontendPerformanceMetrics, valueMs: number) => {
+    setFrontendMetrics((previous) => {
+      const nextSeries = [...previous[field], valueMs].slice(-50);
+      return {
+        ...previous,
+        [field]: nextSeries,
+      };
+    });
+  };
+
+  const toP95 = (values: number[]): number | null => {
+    if (values.length === 0) {
+      return null;
+    }
+    const sorted = [...values].sort((a, b) => a - b);
+    const index = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
+    return sorted[index];
+  };
 
   const ensureWalletReady = async () => {
     if (!isConnected || !address) {
@@ -169,6 +219,7 @@ export default function Home() {
       return {
         txHash: null,
         alreadyValid: true,
+        submittedAtMs: null,
       };
     }
 
@@ -176,35 +227,28 @@ export default function Home() {
     const validUntilSeconds = BigInt(Math.floor(validUntilMs / 1000));
     const maxUsdcSpendLimit = parseUnits(DEFAULT_MAX_USDC_SPEND_PER_TX, 6);
 
-    const txHash = await submitAndConfirm(
-      await sendContractWithRetry(
-        {
-          address: CONTRACT_ADDRESSES.sessionKeyRegistry,
-          abi: SESSION_KEY_REGISTRY_ABI,
-          functionName: 'registerSessionKey',
-          args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
-          chainId: ARC_TESTNET_CHAIN_ID,
-        },
-        {
-          onRetry: (attempt, maxAttempts) => {
-            setFeedbackMessage(
-              `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
-            );
-          },
-        }
-      ),
+    const submittedAtMs = Date.now();
+    const txHash = await sendContractWithRetry(
+      {
+        address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+        abi: SESSION_KEY_REGISTRY_ABI,
+        functionName: 'registerSessionKey',
+        args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
+        chainId: ARC_TESTNET_CHAIN_ID,
+      },
       {
         onRetry: (attempt, maxAttempts) => {
-          setFeedbackMessage(
-            `Transaction submitted. Waiting for confirmation (${attempt}/${maxAttempts - 1})...`
-          );
+          setFeedbackMessage(`Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`);
         },
       }
     );
 
+    pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
+
     return {
       txHash,
       alreadyValid: false,
+      submittedAtMs,
     };
   };
 
@@ -217,34 +261,80 @@ export default function Home() {
     setLastActionAt(now);
   };
 
-  const submitAndConfirm = async (
+  const waitForReceiptWithTimeout = async (
     hash: `0x${string}`,
+    timeoutMs: number,
     options?: {
-      onRetry?: (attempt: number, maxAttempts: number) => void;
+      onRateLimitRetry?: (attempt: number) => void;
     }
-  ) => {
-    let lastError: unknown;
+  ): Promise<boolean> => {
+    if (!publicClient) {
+      throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+    }
 
-    for (let attempt = 1; attempt <= TX_CONFIRM_MAX_RETRIES; attempt += 1) {
+    const startedAt = Date.now();
+    let attempt = 0;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      attempt += 1;
       try {
-        const receipt = await publicClient?.waitForTransactionReceipt({ hash });
-        if (!receipt || receipt.status !== 'success') {
-          throw new Error('Transaction was not confirmed successfully on-chain.');
-        }
-        return hash;
+        const receipt = await publicClient.getTransactionReceipt({ hash });
+        return receipt.status === 'success';
       } catch (error: unknown) {
-        lastError = error;
-        const canRetry = isRateLimitError(error) && attempt < TX_CONFIRM_MAX_RETRIES;
-        if (!canRetry) {
-          throw error;
+        if (isPendingReceiptError(error)) {
+          await sleep(TX_CONFIRM_POLL_INTERVAL_MS);
+          continue;
         }
 
-        options?.onRetry?.(attempt, TX_CONFIRM_MAX_RETRIES);
-        await sleep(getRetryDelayMs(attempt));
+        if (isRateLimitError(error)) {
+          options?.onRateLimitRetry?.(attempt);
+          await sleep(getRetryDelayMs(attempt, TX_CONFIRM_POLL_INTERVAL_MS));
+          continue;
+        }
+
+        throw error;
       }
     }
 
-    throw lastError instanceof Error ? lastError : new Error('Transaction confirmation failed.');
+    return false;
+  };
+
+  const trackConfirmationInBackground = (
+    hash: `0x${string}`,
+    startedAtMs: number,
+    onConfirmed: () => void,
+    onFailed: (reason: string) => void,
+    onTimeout: () => void
+  ) => {
+    void (async () => {
+      const confirmedInPrimaryWindow = await waitForReceiptWithTimeout(hash, TX_CONFIRM_TIMEOUT_MS, {
+        onRateLimitRetry: (attempt) => {
+          setFeedbackMessage(`Transaction submitted. Network busy while confirming (retry #${attempt})...`);
+        },
+      });
+
+      if (confirmedInPrimaryWindow) {
+        pushFrontendMetric('timeToConfirmedMs', Date.now() - startedAtMs);
+        onConfirmed();
+        return;
+      }
+
+      onTimeout();
+
+      for (let round = 1; round <= TX_CONFIRM_BACKGROUND_MAX_ROUNDS; round += 1) {
+        await sleep(TX_CONFIRM_BACKGROUND_DELAY_MS);
+        const confirmed = await waitForReceiptWithTimeout(hash, TX_CONFIRM_TIMEOUT_MS);
+        if (confirmed) {
+          pushFrontendMetric('timeToConfirmedMs', Date.now() - startedAtMs);
+          onConfirmed();
+          return;
+        }
+      }
+
+      onFailed('Transaction is still pending after background confirmation retries.');
+    })().catch((error: unknown) => {
+      onFailed(getErrorMessage(error));
+    });
   };
 
   const sendContractWithRetry = async (
@@ -318,6 +408,7 @@ export default function Home() {
           recipeType: selectedRecipeSnapshot.recipeType,
           targetProtocolAddress: selectedRecipeSnapshot.targetProtocolAddress,
           status: 'active',
+          txLifecycleStatus: delegationResult.alreadyValid ? 'already-valid' : 'submitted',
           maxSlippageBps,
           maxUsdcSpendPerTx: `${DEFAULT_MAX_USDC_SPEND_PER_TX} USDC`,
           validUntil,
@@ -327,11 +418,65 @@ export default function Home() {
 
       const delegationMessage = delegationResult.alreadyValid
         ? 'Delegation already valid for this wallet. '
-        : `Delegation registered on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash} `;
+        : `Delegation submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash} `;
 
       setFeedbackMessage(
         `${selectedRecipeSnapshot.name} activated. ${delegationMessage}${keeperSyncWarning}`
       );
+
+      if (delegationResult.txHash && delegationResult.submittedAtMs) {
+        trackConfirmationInBackground(
+          delegationResult.txHash,
+          delegationResult.submittedAtMs,
+          () => {
+            setActiveRecipes((previous) => {
+              const current = previous[selectedRecipeSnapshot.id];
+              if (!current) return previous;
+              return {
+                ...previous,
+                [selectedRecipeSnapshot.id]: {
+                  ...current,
+                  txLifecycleStatus: 'confirmed',
+                },
+              };
+            });
+            setFeedbackMessage(
+              `${selectedRecipeSnapshot.name} delegation confirmed on-chain. View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash}`
+            );
+          },
+          (reason) => {
+            setActiveRecipes((previous) => {
+              const current = previous[selectedRecipeSnapshot.id];
+              if (!current) return previous;
+              return {
+                ...previous,
+                [selectedRecipeSnapshot.id]: {
+                  ...current,
+                  txLifecycleStatus: 'failed',
+                },
+              };
+            });
+            setFeedbackMessage(`Delegation confirmation failed: ${reason}`);
+          },
+          () => {
+            setActiveRecipes((previous) => {
+              const current = previous[selectedRecipeSnapshot.id];
+              if (!current) return previous;
+              return {
+                ...previous,
+                [selectedRecipeSnapshot.id]: {
+                  ...current,
+                  txLifecycleStatus: 'timeout',
+                },
+              };
+            });
+            setFeedbackMessage(
+              `Delegation submitted and still pending after ${Math.round(TX_CONFIRM_TIMEOUT_MS / 1000)}s. Background confirmation will keep retrying.`
+            );
+          }
+        );
+      }
+
       setSelectedRecipe(null);
     } catch (error: unknown) {
       setFeedbackMessage(`Activation failed: ${getErrorMessage(error)}`);
@@ -351,31 +496,24 @@ export default function Home() {
       enforceActionCooldown();
       const { connectedAddress } = await ensureWalletReady();
       const willPause = currentRecipe.status !== 'paused';
-      const txHash = await submitAndConfirm(
-        await sendContractWithRetry(
-          {
-            address: CONTRACT_ADDRESSES.sharedExecutorProxy,
-            abi: SHARED_EXECUTOR_PROXY_ABI,
-            functionName: willPause ? 'pauseMyRecipes' : 'unpauseMyRecipes',
-            args: [],
-            chainId: ARC_TESTNET_CHAIN_ID,
-          },
-          {
-            onRetry: (attempt, maxAttempts) => {
-              setFeedbackMessage(
-                `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
-              );
-            },
-          }
-        ),
+      const submittedAtMs = Date.now();
+      const txHash = await sendContractWithRetry(
+        {
+          address: CONTRACT_ADDRESSES.sharedExecutorProxy,
+          abi: SHARED_EXECUTOR_PROXY_ABI,
+          functionName: willPause ? 'pauseMyRecipes' : 'unpauseMyRecipes',
+          args: [],
+          chainId: ARC_TESTNET_CHAIN_ID,
+        },
         {
           onRetry: (attempt, maxAttempts) => {
             setFeedbackMessage(
-              `Transaction submitted. Waiting for confirmation (${attempt}/${maxAttempts - 1})...`
+              `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
             );
           },
         }
       );
+      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
 
       setActiveRecipes((previous) => {
         const nextStatus: RecipeLifecycleStatus = willPause ? 'paused' : 'active';
@@ -383,7 +521,7 @@ export default function Home() {
           if (state.status === 'revoked') {
             return [id, state] as const;
           }
-          return [id, { ...state, status: nextStatus }] as const;
+          return [id, { ...state, status: nextStatus, txLifecycleStatus: 'submitted' as TxLifecycleStatus, txHash }] as const;
         });
         return Object.fromEntries(updatedEntries);
       });
@@ -401,7 +539,25 @@ export default function Home() {
       }
 
       setFeedbackMessage(
-        `Delegation ${willPause ? 'paused' : 'resumed'} on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
+        `Delegation ${willPause ? 'pause' : 'resume'} submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
+      );
+
+      trackConfirmationInBackground(
+        txHash,
+        submittedAtMs,
+        () => {
+          setFeedbackMessage(
+            `Delegation ${willPause ? 'paused' : 'resumed'} on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}`
+          );
+        },
+        (reason) => {
+          setFeedbackMessage(`Pause/Resume confirmation failed: ${reason}`);
+        },
+        () => {
+          setFeedbackMessage(
+            `Pause/Resume transaction is pending beyond ${Math.round(TX_CONFIRM_TIMEOUT_MS / 1000)}s. Background finalizer is retrying.`
+          );
+        }
       );
     } catch (error: unknown) {
       setFeedbackMessage(`Pause/Resume failed: ${getErrorMessage(error)}`);
@@ -420,31 +576,24 @@ export default function Home() {
     try {
       enforceActionCooldown();
       const { connectedAddress, keeperSessionKeyAddress: configuredKeeperSessionKeyAddress } = await ensureWalletReady();
-      const txHash = await submitAndConfirm(
-        await sendContractWithRetry(
-          {
-            address: CONTRACT_ADDRESSES.sessionKeyRegistry,
-            abi: SESSION_KEY_REGISTRY_ABI,
-            functionName: 'revokeSessionKey',
-            args: [configuredKeeperSessionKeyAddress],
-            chainId: ARC_TESTNET_CHAIN_ID,
-          },
-          {
-            onRetry: (attempt, maxAttempts) => {
-              setFeedbackMessage(
-                `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
-              );
-            },
-          }
-        ),
+      const submittedAtMs = Date.now();
+      const txHash = await sendContractWithRetry(
+        {
+          address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+          abi: SESSION_KEY_REGISTRY_ABI,
+          functionName: 'revokeSessionKey',
+          args: [configuredKeeperSessionKeyAddress],
+          chainId: ARC_TESTNET_CHAIN_ID,
+        },
         {
           onRetry: (attempt, maxAttempts) => {
             setFeedbackMessage(
-              `Transaction submitted. Waiting for confirmation (${attempt}/${maxAttempts - 1})...`
+              `Arc RPC is busy. Retrying transaction submission (${attempt}/${maxAttempts - 1})...`
             );
           },
         }
       );
+      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
 
       setActiveRecipes((previous) => {
         const updatedEntries = Object.entries(previous).map(([id, state]) => [
@@ -452,6 +601,8 @@ export default function Home() {
           {
             ...state,
             status: 'revoked' as RecipeLifecycleStatus,
+            txLifecycleStatus: 'submitted' as TxLifecycleStatus,
+            txHash,
           },
         ] as const);
         return Object.fromEntries(updatedEntries);
@@ -470,7 +621,23 @@ export default function Home() {
       }
 
       setFeedbackMessage(
-        `Delegation revoked on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
+        `Delegation revoke submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
+      );
+
+      trackConfirmationInBackground(
+        txHash,
+        submittedAtMs,
+        () => {
+          setFeedbackMessage(`Delegation revoked on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}`);
+        },
+        (reason) => {
+          setFeedbackMessage(`Revoke confirmation failed: ${reason}`);
+        },
+        () => {
+          setFeedbackMessage(
+            `Revoke transaction is pending beyond ${Math.round(TX_CONFIRM_TIMEOUT_MS / 1000)}s. Background finalizer is retrying.`
+          );
+        }
       );
     } catch (error: unknown) {
       setFeedbackMessage(`Revoke failed: ${getErrorMessage(error)}`);
@@ -553,6 +720,11 @@ export default function Home() {
                     </div>
                     {lifecycle ? (
                       <div className="text-xs text-slate-400">
+                        Tx Lifecycle: <span className="font-mono text-slate-200 uppercase">{lifecycle.txLifecycleStatus}</span>
+                      </div>
+                    ) : null}
+                    {lifecycle ? (
+                      <div className="text-xs text-slate-400">
                         Expires: <span className="font-mono text-slate-200">{new Date(lifecycle.validUntil).toLocaleString()}</span>
                       </div>
                     ) : null}
@@ -602,6 +774,26 @@ export default function Home() {
                 </div>
               );
             })}
+          </div>
+        </section>
+
+        <section className="glass-card p-4 text-xs text-slate-300 space-y-1">
+          <div className="font-semibold text-slate-100">Wallet Flow Performance (local session)</div>
+          <div>
+            Time to submitted p95:{' '}
+            <span className="font-mono text-slate-100">
+              {toP95(frontendMetrics.timeToSubmittedMs) !== null
+                ? `${toP95(frontendMetrics.timeToSubmittedMs)}ms`
+                : 'N/A'}
+            </span>
+          </div>
+          <div>
+            Time to confirmed p95:{' '}
+            <span className="font-mono text-slate-100">
+              {toP95(frontendMetrics.timeToConfirmedMs) !== null
+                ? `${toP95(frontendMetrics.timeToConfirmedMs)}ms`
+                : 'N/A'}
+            </span>
           </div>
         </section>
 

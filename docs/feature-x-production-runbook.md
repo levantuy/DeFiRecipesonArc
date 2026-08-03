@@ -21,8 +21,15 @@ Feature X in this release covers recipe delegation lifecycle:
 - `KEEPER_HEALTH_PORT` (optional, default `8787`)
 - `ARC_RPC_TIMEOUT_MS` (optional, default `15000`)
 - `ARC_RPC_RETRY_COUNT` (optional, default `2`)
-- `KEEPER_TX_RETRY_MAX_ATTEMPTS` (optional, default `3`)
+- `SCHEDULER_SIMULATION_BACKOFF_MS` (optional, default `30000`)
+- `KEEPER_TX_RETRY_MAX_ATTEMPTS` (optional, default `7`)
 - `KEEPER_TX_RECEIPT_TIMEOUT_MS` (optional, default `10000`)
+- `KEEPER_TX_CONFIRM_MAX_ATTEMPTS` (optional, default `8`)
+- `KEEPER_TX_CONFIRM_RETRY_DELAY_MS` (optional, default `4000`)
+- `KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH` (optional, default `false`)
+- `KEEPER_SIMULATION_ESTIMATE_GAS` (optional, default `false`)
+- `ENABLE_UNIFIED_BALANCE` (optional, default `false`)
+- `ENABLE_GATEWAY_FORWARDER` (optional, default `false`)
 - `REDIS_RETRY_MAX_DELAY_MS` (optional, default `10000`)
 
 ## Build & Validation
@@ -38,25 +45,20 @@ Feature X in this release covers recipe delegation lifecycle:
 3. `pnpm build`
 4. `pnpm test`
 
+5. `pnpm alerts:check` (requires keeper `/metrics` endpoint reachable)
 ### Web
 1. `cd web`
 2. `pnpm lint`
 3. `pnpm build`
-
-## Deploy Steps
-1. Deploy contracts and verify addresses.
-2. Update keeper contract env vars:
-   - `SESSION_KEY_REGISTRY_ADDRESS`
-   - `RECIPE_GUARDRAIL_ADDRESS`
-   - `SHARED_EXECUTOR_PROXY_ADDRESS`
-3. Run DB migration in keeper:
-   - `pnpm prisma:migrate`
-4. Start keeper:
+- `CIRCLE_CLIENT_KEY` / `CIRCLE_CLIENT_URL` (required only when `ENABLE_UNIFIED_BALANCE=true`)
+- `GATEWAY_API_BASE_URL` / `GATEWAY_TRANSFER_PATH` (required only when `ENABLE_GATEWAY_FORWARDER=true`)
    - `pnpm start`
-5. Health probe:
-   - `GET /healthz` must return HTTP 200.
-6. Start web:
-   - `pnpm start`
+### Alert Thresholds (optional)
+- `ALERT_CRON_CYCLE_P95_MS`
+- `ALERT_RPC_CALLS_PER_CYCLE_P95`
+- `ALERT_SIM_RATE_LIMIT_FAILURE_RATE`
+- `ALERT_ENQUEUE_TO_SUBMITTED_P95_MS`
+- `ALERT_ENQUEUE_TO_CONFIRMED_P95_MS`
 
 ## Smoke Test (Production-like)
 1. Connect wallet on Arc Testnet (5042002).
@@ -76,3 +78,5 @@ Feature X in this release covers recipe delegation lifecycle:
 ## Operational Notes
 - On Windows, `pnpm prisma:generate` can fail with EPERM if a `ts-node-dev` keeper process is running and holding Prisma engine files. Stop dev keeper processes before generating Prisma client.
 - Keep `KEEPER_PRIVATE_KEY` in secret storage only, never in source control.
+- Confirmation now runs asynchronously in keeper by default. Set `KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH=true` only for debugging or one-off diagnostics.
+- Keep `ENABLE_UNIFIED_BALANCE` and `ENABLE_GATEWAY_FORWARDER` disabled until integration credentials and route policies are validated in staging.

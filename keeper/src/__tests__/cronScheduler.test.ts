@@ -46,7 +46,7 @@ vi.mock('../index', () => ({
   }),
 }));
 
-import { pollAndTriggerActiveRecipes } from '../schedulers/cronScheduler';
+import { __resetCronSchedulerStateForTests, pollAndTriggerActiveRecipes } from '../schedulers/cronScheduler';
 
 function makeActiveRecipe(overrides: Record<string, unknown>) {
   return {
@@ -64,6 +64,7 @@ function makeActiveRecipe(overrides: Record<string, unknown>) {
 describe('Cron Scheduler Recipe Triggering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetCronSchedulerStateForTests();
     simulateRecipeStepMock.mockResolvedValue({ success: true, estimatedGasUsdc: 90000n });
     getBytecodeMock.mockResolvedValue('0x1234');
     readContractMock.mockResolvedValue(true);
@@ -148,7 +149,11 @@ describe('Cron Scheduler Recipe Triggering', () => {
         targetProtocol: '0x4444444444444444444444444444444444444444',
       }),
     ]);
-    readContractMock.mockResolvedValue(false);
+    readContractMock
+      .mockResolvedValueOnce(1000000n) // claimableRewards
+      .mockResolvedValueOnce('0x9999999999999999999999999999999999999999') // guardrail owner
+      .mockResolvedValueOnce(true) // protocol whitelisted
+      .mockResolvedValueOnce(false); // selector blocked
 
     await pollAndTriggerActiveRecipes();
     await pollAndTriggerActiveRecipes();
