@@ -6,9 +6,9 @@
 
 **Version:** 2.1 (Lean Core Execution & Security Focus)  
 **Status:** Vision & MVP Specification  
-**Network:** Arc Network  
+**Network:** Arc Testnet (Chain ID `5042002`)  
 **Category:** DeFi Automation / Yield Workflows  
-**Primary Asset:** USDC  
+**Token Scope (Testnet):** USDC, EURC, cirBTC  
 
 ---
 
@@ -54,7 +54,7 @@ Users maintain 100% ownership of their assets. Automation agents only receive re
 Every recipe explicitly defines what it does, when it triggers, and which protocols it interacts with. Simulations run on-chain before user activation.
 
 ## 4. Whitelisted Protocols Only
-In the MVP phase, execution is strictly constrained to audited, whitelisted Arc protocols (e.g., Arc Lending, Official Arc DEX).
+In the MVP phase, execution is strictly constrained to audited, whitelisted Arc protocols and approved swap route destinations resolved through Arc App Kit Swap (https://docs.arc.io/app-kit/swap).
 
 ---
 
@@ -64,12 +64,12 @@ To deliver immediate value with maximum security, MVP development centers on **5
 
 ### Recipe 1: USDC Yield Auto-Compounder
 * **Goal:** Maximize compounding yield on Arc Lending.
-* **Workflow:** Deposit USDC into Arc Lending → Monitor accrued rewards → Weekly claim rewards → Swap rewards to USDC via DEX → Re-deposit into Arc Lending.
+* **Workflow:** Deposit USDC into Arc Lending → Monitor accrued rewards → Weekly claim rewards → Swap rewards to USDC via Arc App Kit Swap routes → Re-deposit into Arc Lending.
 * **Risk Level:** Low.
 
-### Recipe 2: USDC Recurring DCA (Dollar-Cost Averaging)
+### Recipe 2: USDC -> cirBTC Recurring DCA (Dollar-Cost Averaging)
 * **Goal:** Automated periodic asset accumulation.
-* **Workflow:** Hold USDC in user wallet → Trigger weekly/monthly → Swap pre-set USDC amount for target asset (e.g., ETH/BTC on Arc DEX) with slippage limits → Transfer acquired asset back to user wallet.
+* **Workflow:** Hold USDC in user wallet → Trigger weekly/monthly → Swap pre-set USDC amount to cirBTC via Arc App Kit Swap routes with slippage limits → Transfer acquired cirBTC back to user wallet.
 * **Risk Level:** Low-Medium.
 
 ### Recipe 3: USDC Smart Yield Rebalancer
@@ -106,7 +106,7 @@ To deliver immediate value with maximum security, MVP development centers on **5
       ├─► Check Protocol Whitelist
       │
       ▼ 3. Execute
-[ Whitelisted Arc Protocols ] (Arc Lending / Arc DEX)
+[ Whitelisted Arc Protocols ] (Arc Lending / App Kit-resolved swap destinations)
 ```
 
 ## Security Guardrails

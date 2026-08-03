@@ -55,7 +55,7 @@ graph TD
         ARC_CHAIN["Arc Testnet (Chain ID 5042002)"]
         USDC_NATIVE["Native USDC Gas Engine"]
         LENDING["Arc Lending Protocol"]
-        DEX["Arc Official DEX Router"]
+        SWAP["Arc App Kit Swap Service"]
         VAULTS["USDC Treasury Vaults"]
     end
 
@@ -75,11 +75,11 @@ graph TD
     GUARD --> SLIPPAGE
     SLIPPAGE --> PAUSE
     PAUSE --> LENDING
-    PAUSE --> DEX
+    PAUSE --> SWAP
     PAUSE --> VAULTS
 
     LENDING --> ARC_CHAIN
-    DEX --> ARC_CHAIN
+    SWAP --> ARC_CHAIN
     VAULTS --> ARC_CHAIN
     ARC_CHAIN --> USDC_NATIVE
 ```
@@ -101,7 +101,7 @@ graph TD
 #### Key Security Patterns & Best Practices:
 * **EVM Paris Target**: `foundry.toml` must be configured with `evm_version = "paris"` to prevent opcode incompatibility on Arc.
 * **Reentrancy Protection**: Inherits OpenZeppelin `ReentrancyGuardUpgradeable` on all state-changing execution methods.
-* **Slippage Bounds**: All token swap and liquidity extraction steps calculate minimum expected outputs against oracle prices (Pyth / DEX TWAP) with configurable maximum slippage tolerance (0.5%–1.0%).
+* **Slippage Bounds**: All token swap and liquidity extraction steps calculate minimum expected outputs against oracle prices (Pyth / market oracles) and Arc App Kit Swap route quotes, with configurable maximum slippage tolerance (0.5%–1.0%).
 
 ```solidity
 // Example guardrail validation inside SharedExecutorProxy.sol

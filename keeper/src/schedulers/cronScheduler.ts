@@ -1,4 +1,4 @@
-import { PrismaClient, RecipeStatus, RecipeType } from '@prisma/client';
+import { RecipeStatus, RecipeType } from '../db/types';
 import { createPublicClient, http } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
@@ -9,12 +9,20 @@ import {
   buildRebalancerCallData,
 } from '../simulation/recipePayloads';
 import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
+import {
+  ARC_CIRBTC_ADDRESS,
+  ARC_EURC_ADDRESS,
+  ARC_USDC_ADDRESS,
+  DEFAULT_DCA_MAX_SLIPPAGE_BPS,
+  parseDcaMaxSlippageBpsWithFallback,
+  parseDcaTargetAssetSymbolWithFallback,
+} from '../config/dcaRouting';
 import { RUNTIME_CONFIG } from '../config/runtime';
 import { incrementCounter, readCounter, recordCronCycle } from '../observability/metrics';
+import { recipesRepository } from '../db/repositories/recipesRepository';
 const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompounderLendingBorrowing;
 import { getKeeperAccount } from '../index';
-
-const prisma = new PrismaClient();
+import { createDcaSwapRouteClientFromRuntime } from '../integrations/circle/dcaSwapRouteClient';
 const USDC_DECIMALS = 6n;
 const USDC_BASE = 10n ** USDC_DECIMALS;
 const DEFAULT_DCA_USDC_BASE_UNITS = 50_000_000n; // 50 USDC
@@ -48,6 +56,7 @@ const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAIMABLE_REWARDS_CACHE_TTL_MS = 30 * 1000;
 const claimableRewardsCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
+const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
 
 const AUTO_COMPOUNDER_REWARDS_ABI = [
   {
@@ -69,6 +78,8 @@ interface RecipeParameters {
   checkIntervalHours?: number;
   dcaAmountUsdc?: string;
   dcaAmountUsdcBaseUnits?: string;
+  maxSlippageBps?: number;
+  targetAssetSymbol?: string;
 }
 
 function recipeLogContext(recipe: { id: string; userAddress: string; recipeType: RecipeType }): string {
@@ -95,7 +106,49 @@ function parseRecipeParameters(parametersJson: unknown): RecipeParameters {
     parsed.dcaAmountUsdcBaseUnits = raw.dcaAmountUsdcBaseUnits;
   }
 
+  if (typeof raw.maxSlippageBps === 'number') {
+    parsed.maxSlippageBps = raw.maxSlippageBps;
+  }
+
+  if (typeof raw.targetAssetSymbol === 'string') {
+    parsed.targetAssetSymbol = raw.targetAssetSymbol;
+  }
+
   return parsed;
+}
+
+function resolveDcaMaxSlippageBps(recipeParams: RecipeParameters, context: string): number {
+  const slippageResult = parseDcaMaxSlippageBpsWithFallback(recipeParams.maxSlippageBps);
+  if (slippageResult.usedFallback) {
+    console.warn(
+      `[Cron Scheduler Warning] Invalid or missing maxSlippageBps ${context}. ` +
+      `Using fallback=${DEFAULT_DCA_MAX_SLIPPAGE_BPS} bps for backward compatibility.`
+    );
+  }
+  return slippageResult.maxSlippageBps;
+}
+
+function resolveDcaTargetAssetSymbol(recipeParams: RecipeParameters, context: string): string {
+  const symbolResult = parseDcaTargetAssetSymbolWithFallback(recipeParams.targetAssetSymbol);
+  if (symbolResult.usedFallback) {
+    console.warn(
+      `[Cron Scheduler Warning] Invalid or missing targetAssetSymbol ${context}. ` +
+      `Using fallback=cirBTC for Arc Testnet compatibility.`
+    );
+  }
+  return symbolResult.targetAssetSymbol;
+}
+
+function resolveDcaTargetAssetAddress(targetAssetSymbol: string): `0x${string}` {
+  if (targetAssetSymbol === 'cirBTC') {
+    return ARC_CIRBTC_ADDRESS;
+  }
+
+  if (targetAssetSymbol === 'EURC') {
+    return ARC_EURC_ADDRESS;
+  }
+
+  throw new Error('RECURRING_DCA targetAssetSymbol cannot be USDC; use EURC or cirBTC.');
 }
 
 function parseCheckIntervalHours(intervalHours?: number): number {
@@ -265,6 +318,14 @@ function isSelectorNotAllowedError(errorMessage: string): boolean {
 function isExecutorNotApprovedError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return normalized.includes('executor not approved');
+}
+
+function isArcAppKitNoRouteError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return (
+    normalized.includes('no route available') ||
+    normalized.includes('"code":331001')
+  );
 }
 
 function extractSelectorFromCallData(callData: `0x${string}`): `0x${string}` {
@@ -470,7 +531,7 @@ async function getClaimableRewards(
 }
 
 /**
- * Periodically queries active recipes in Prisma DB, evaluates trigger conditions,
+ * Periodically queries active recipes in PostgreSQL, evaluates trigger conditions,
  * runs pre-flight eth_call static simulation, and enqueues jobs to BullMQ.
  */
 export async function pollAndTriggerActiveRecipes() {
@@ -494,9 +555,7 @@ export async function pollAndTriggerActiveRecipes() {
       return;
     }
 
-    const activeRecipes = await prisma.activeRecipe.findMany({
-      where: { status: RecipeStatus.ACTIVE },
-    });
+    const activeRecipes = await recipesRepository.findByStatus(RecipeStatus.ACTIVE);
 
     if (activeRecipes.length === 0) {
       return;
@@ -528,15 +587,16 @@ export async function pollAndTriggerActiveRecipes() {
         let minAmountOut = '0';
 
         // AUTO_COMPOUNDER always targets the current LendingBorrowing deployment.
+        // RECURRING_DCA may resolve runtime route execution target from App Kit.
         // Other recipe types continue to use their configured targetProtocol.
-        const targetProtocol =
+        let targetProtocol =
           recipe.recipeType === RecipeType.AUTO_COMPOUNDER
             ? AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS
-            : (recipe.targetProtocol as `0x${string}`);
+            : recipe.targetProtocol;
 
         if (
           recipe.recipeType === RecipeType.AUTO_COMPOUNDER &&
-          recipe.targetProtocol.toLowerCase() !== AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS.toLowerCase()
+          recipe.targetProtocol?.toLowerCase() !== AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS.toLowerCase()
         ) {
           console.warn(
             `[Cron Scheduler Notice] AUTO_COMPOUNDER recipe ${context} uses an old targetProtocol=${recipe.targetProtocol}. ` +
@@ -544,21 +604,9 @@ export async function pollAndTriggerActiveRecipes() {
           );
         }
 
-        const hasTargetProtocolCode = await targetProtocolHasCode(targetProtocol);
-        if (!hasTargetProtocolCode) {
-          if (!protocolNoCodeWarned.has(targetProtocol)) {
-            console.warn(
-              `[Cron Scheduler Action Required] targetProtocol=${targetProtocol} has no bytecode on Arc Testnet. ` +
-              `Update this recipe to use a deployed protocol contract address.`
-            );
-            protocolNoCodeWarned.add(targetProtocol);
-          }
-          continue;
-        }
-
         if (recipe.recipeType === RecipeType.AUTO_COMPOUNDER) {
           const claimableRewards = await getClaimableRewards(
-            targetProtocol,
+            targetProtocol as `0x${string}`,
             recipe.userAddress as `0x${string}`
           );
 
@@ -580,34 +628,103 @@ export async function pollAndTriggerActiveRecipes() {
           minAmountOut = '0';
         } else if (recipe.recipeType === RecipeType.RECURRING_DCA) {
           const dcaAmount = parseDcaAmountUsdcBaseUnits(recipeParams);
-          const minAssetOut = (dcaAmount * 995n) / 1000n; // 0.5% slippage cap
-          const wethAddress = '0x4200000000000000000000000000000000000006';
-          callData = buildDcaCallData(
-            dcaAmount,
-            minAssetOut,
-            '0x3600000000000000000000000000000000000000',
-            wethAddress,
-            recipe.userAddress as `0x${string}`
-          );
-          // DCA spend is denominated in USDC; proxy uses this value for delegated spend accounting.
-          minAmountOut = dcaAmount.toString();
+          const maxSlippageBps = resolveDcaMaxSlippageBps(recipeParams, context);
+          const targetAssetSymbol = resolveDcaTargetAssetSymbol(recipeParams, context);
+
+          if (recipe.swapProvider === 'ARC_APP_KIT_SWAP') {
+            try {
+              const routePlan = await dcaSwapRouteClient.resolveRoute({
+                recipientAddress: recipe.userAddress as `0x${string}`,
+                amountInBaseUnits: dcaAmount,
+                maxSlippageBps,
+                targetAssetSymbol,
+              });
+
+              targetProtocol = routePlan.targetProtocolAddress;
+              callData = routePlan.callData;
+            } catch (routeError: unknown) {
+              const routeErrorMessage = routeError instanceof Error ? routeError.message : String(routeError);
+
+              if (!isArcAppKitNoRouteError(routeErrorMessage)) {
+                throw routeError;
+              }
+
+              if (!targetProtocol) {
+                console.warn(
+                  `[Cron Scheduler Action Required] App Kit has no swap route ${context}. ` +
+                  `Register this DCA with a deployed DEX router targetProtocol fallback, reduce dcaAmountUsdc, ` +
+                  `or relax maxSlippageBps to widen route availability.`
+                );
+                continue;
+              }
+
+              const minAssetOut = (dcaAmount * BigInt(10_000 - maxSlippageBps)) / 10_000n;
+              const targetAssetAddress = resolveDcaTargetAssetAddress(targetAssetSymbol);
+              callData = buildDcaCallData(
+                dcaAmount,
+                minAssetOut,
+                ARC_USDC_ADDRESS,
+                targetAssetAddress,
+                recipe.userAddress as `0x${string}`
+              );
+
+              console.warn(
+                `[Cron Scheduler Notice] App Kit reported no route ${context}. ` +
+                `Falling back to configured targetProtocol=${targetProtocol}.`
+              );
+            }
+          } else {
+            const minAssetOut = (dcaAmount * BigInt(10_000 - maxSlippageBps)) / 10_000n;
+            const targetAssetAddress = resolveDcaTargetAssetAddress(targetAssetSymbol);
+            callData = buildDcaCallData(
+              dcaAmount,
+              minAssetOut,
+              ARC_USDC_ADDRESS,
+              targetAssetAddress,
+              recipe.userAddress as `0x${string}`
+            );
+          }
+
+          // Keep spend accounting explicit: this value is consumed by SessionKeyRegistry via SharedExecutorProxy.
+          const delegatedUsdcSpendAmount = dcaAmount;
+          minAmountOut = delegatedUsdcSpendAmount.toString();
         } else if (recipe.recipeType === RecipeType.SMART_YIELD_REBALANCER) {
           callData = buildRebalancerCallData(recipe.userAddress as `0x${string}`, 100000000n);
           minAmountOut = '100000000';
         }
 
-        const selectorHex = extractSelectorFromCallData(callData);
-        const guardrailOwnerAddress = await getGuardrailOwnerAddress();
-
-        const isProtocolAllowed = await isProtocolWhitelisted(targetProtocol);
-        if (!isProtocolAllowed) {
-          maybeLogProtocolNotWhitelistedHint(targetProtocol, guardrailOwnerAddress);
+        if (!targetProtocol) {
+          console.warn(
+            `[Cron Scheduler Warning] Missing on-chain targetProtocol ${context}. ` +
+            `Recipe execution skipped until a resolvable execution target is available.`
+          );
           continue;
         }
 
-        const isSelectorAllowed = await isSelectorAllowedForProtocol(targetProtocol, selectorHex);
+        const hasTargetProtocolCode = await targetProtocolHasCode(targetProtocol as `0x${string}`);
+        if (!hasTargetProtocolCode) {
+          if (!protocolNoCodeWarned.has(targetProtocol)) {
+            console.warn(
+              `[Cron Scheduler Action Required] targetProtocol=${targetProtocol} has no bytecode on Arc Testnet. ` +
+              `Update this recipe to use a deployed protocol contract address.`
+            );
+            protocolNoCodeWarned.add(targetProtocol);
+          }
+          continue;
+        }
+
+        const selectorHex = extractSelectorFromCallData(callData);
+        const guardrailOwnerAddress = await getGuardrailOwnerAddress();
+
+        const isProtocolAllowed = await isProtocolWhitelisted(targetProtocol as `0x${string}`);
+        if (!isProtocolAllowed) {
+          maybeLogProtocolNotWhitelistedHint(targetProtocol as `0x${string}`, guardrailOwnerAddress);
+          continue;
+        }
+
+        const isSelectorAllowed = await isSelectorAllowedForProtocol(targetProtocol as `0x${string}`, selectorHex);
         if (!isSelectorAllowed) {
-          maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType, guardrailOwnerAddress);
+          maybeLogSelectorNotAllowedHint(targetProtocol as `0x${string}`, selectorHex, recipe.recipeType, guardrailOwnerAddress);
           continue;
         }
 
@@ -616,7 +733,7 @@ export async function pollAndTriggerActiveRecipes() {
           {
             userAddress: recipe.userAddress as `0x${string}`,
             executorProxyAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
-            targetProtocolAddress: targetProtocol,
+            targetProtocolAddress: targetProtocol as `0x${string}`,
             callData,
             minAmountOut: BigInt(minAmountOut),
             keeperAddress: keeperAccount.address,
@@ -650,11 +767,11 @@ export async function pollAndTriggerActiveRecipes() {
 
           if (isSelectorNotAllowedError(simulationError)) {
             const guardrailOwnerAddress = await getGuardrailOwnerAddress();
-            maybeLogSelectorNotAllowedHint(targetProtocol, selectorHex, recipe.recipeType, guardrailOwnerAddress);
+            maybeLogSelectorNotAllowedHint(targetProtocol as `0x${string}`, selectorHex, recipe.recipeType, guardrailOwnerAddress);
           }
 
           if (isExecutorNotApprovedError(simulationError)) {
-            maybeLogExecutorNotApprovedHint(targetProtocol);
+            maybeLogExecutorNotApprovedHint(targetProtocol as `0x${string}`);
           }
 
           // Rewards can disappear between the pre-check and the simulation.
@@ -685,7 +802,7 @@ export async function pollAndTriggerActiveRecipes() {
           recipeType: recipe.recipeType,
           userAddress: recipe.userAddress as `0x${string}`,
           executorProxyAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
-          targetProtocolAddress: targetProtocol,
+          targetProtocolAddress: targetProtocol as `0x${string}`,
           callData,
           minAmountOut,
           keeperAddress: keeperAccount.address,

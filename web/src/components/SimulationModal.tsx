@@ -5,13 +5,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertTriangle, ArrowRight, ShieldAlert, X } from 'lucide-react';
 
 export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA' | 'SMART_YIELD_REBALANCER';
+export type SwapProvider = 'ARC_APP_KIT_SWAP';
 
 export interface RecipeConfig {
   id: string;
   recipeType: RecipeType;
   name: string;
   targetProtocol: string;
-  targetProtocolAddress: `0x${string}`;
+  targetProtocolAddress?: `0x${string}`;
+  swapProvider?: SwapProvider;
+  targetAssetSymbol?: 'USDC' | 'EURC' | 'cirBTC';
   maxSlippageBps: number;
   estimatedGasUsdc: string;
   expectedNetApy: string;
@@ -95,7 +98,10 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                 <div className="max-w-[40%] truncate">{recipe.targetProtocol}</div>
               </div>
               <div className="text-[11px] text-slate-500 font-mono mt-1 break-all">
-                Target: {recipe.targetProtocolAddress}
+                Target: {recipe.targetProtocolAddress || 'Route-resolved at runtime'}
+              </div>
+              <div className="text-[11px] text-slate-500 font-mono mt-1 break-all">
+                Swap Provider: {recipe.swapProvider || 'N/A'}
               </div>
             </div>
 

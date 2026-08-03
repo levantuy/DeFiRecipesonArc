@@ -19,6 +19,7 @@ interface CreateRecipePayload {
   recipeName?: string;
   targetProtocol?: string;
   targetProtocolAddress?: string;
+  swapProvider?: string;
   maxSlippageBps?: number;
   maxUsdcSpendLimit?: string;
   status?: string;
@@ -26,6 +27,9 @@ interface CreateRecipePayload {
 }
 
 const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
+const DEFAULT_DCA_MAX_SLIPPAGE_BPS = 100;
+const MIN_DCA_SLIPPAGE_BPS = 10;
+const MAX_DCA_SLIPPAGE_BPS = 1000;
 
 function getKeeperApiBaseUrl() {
   const configured = process.env.KEEPER_API_BASE_URL || process.env.NEXT_PUBLIC_KEEPER_API_BASE_URL;
@@ -54,6 +58,20 @@ async function postToKeeper(path: string, payload: Record<string, unknown>) {
   return data;
 }
 
+function normalizeMaxSlippageBps(rawValue: unknown): number {
+  if (typeof rawValue !== 'number' || !Number.isInteger(rawValue)) {
+    return DEFAULT_DCA_MAX_SLIPPAGE_BPS;
+  }
+
+  if (rawValue < MIN_DCA_SLIPPAGE_BPS || rawValue > MAX_DCA_SLIPPAGE_BPS) {
+    throw new Error(
+      `maxSlippageBps must be between ${MIN_DCA_SLIPPAGE_BPS} and ${MAX_DCA_SLIPPAGE_BPS}.`
+    );
+  }
+
+  return rawValue;
+}
+
 // In-memory active recipe storage for Web UI (syncs with keeper DB if available)
 const inMemoryRecipes: ActiveRecipeItem[] = [
   {
@@ -71,8 +89,8 @@ const inMemoryRecipes: ActiveRecipeItem[] = [
     id: 'recipe-recurring-dca-1',
     userAddress: '0x3600...0001',
     recipeType: 'RECURRING_DCA',
-    recipeName: 'USDC Recurring DCA',
-    targetProtocol: 'Arc Official DEX Router',
+    recipeName: 'USDC -> cirBTC Recurring DCA',
+    targetProtocol: 'Arc App Kit Swap API',
     maxSlippageBps: 100,
     maxUsdcSpendLimit: '500',
     status: 'ACTIVE',
@@ -96,21 +114,37 @@ export async function POST(request: Request) {
         );
       }
 
-      const targetProtocol = body.targetProtocolAddress || body.targetProtocol || '0x0000000000000000000000000000000000000000';
-      const keeperResult = await postToKeeper('/recipes/register', {
+      const requestParameters =
+        body.parametersJson && typeof body.parametersJson === 'object'
+          ? { ...(body.parametersJson as Record<string, unknown>) }
+          : {};
+      const requestedSlippage = body.maxSlippageBps ?? requestParameters.maxSlippageBps;
+      const maxSlippageBps = normalizeMaxSlippageBps(requestedSlippage);
+      requestParameters.maxSlippageBps = maxSlippageBps;
+
+      const keeperPayload: Record<string, unknown> = {
         userAddress: body.userAddress,
         recipeType: body.recipeType,
-        targetProtocol,
-        parametersJson: body.parametersJson || {},
-      });
+        parametersJson: requestParameters,
+      };
+
+      if (body.targetProtocolAddress) {
+        keeperPayload.targetProtocol = body.targetProtocolAddress;
+      }
+
+      if (body.swapProvider) {
+        keeperPayload.swapProvider = body.swapProvider;
+      }
+
+      const keeperResult = await postToKeeper('/recipes/register', keeperPayload);
 
       const newRecipe: ActiveRecipeItem = {
         id: `recipe-${Date.now()}`,
         userAddress: body.userAddress,
         recipeType: body.recipeType,
         recipeName: body.recipeName || 'Custom Recipe',
-        targetProtocol: body.targetProtocol || targetProtocol,
-        maxSlippageBps: body.maxSlippageBps || 50,
+        targetProtocol: body.targetProtocol || body.swapProvider || body.targetProtocolAddress || 'Arc Protocol',
+        maxSlippageBps,
         maxUsdcSpendLimit: body.maxUsdcSpendLimit || '1000',
         status: 'ACTIVE',
         createdAt: new Date().toISOString(),

@@ -3,7 +3,7 @@
 **Version:** 2.0 (Detailed Granular Specification)  
 **Status:** Approved Specification  
 **Base Document:** [Project Vision v2.1](file:///d:/source-code/arc/DeFiRecipesonArc/docs/project-vision.md)  
-**Network:** Arc Network (Native USDC Gas, Sub-second Finality)  
+**Network:** Arc Testnet only (Chain ID `5042002`, Native USDC Gas, Sub-second Finality)
 **Target Release:** MVP Phase 1 & Roadmap to Phase 2  
 
 ---
@@ -13,6 +13,8 @@
 Tài liệu này quy định chi tiết về mặt **nghiệp vụ, kiến trúc dữ liệu và kỹ thuật phần mềm** cho nền tảng **DeFi Recipes on Arc**. 
 
 Nền tảng hoạt động như một **lớp tự động hoá công việc DeFi phi lưu ký (Non-Custodial Workflow Automation Layer)**, giúp người dùng lập trình và tự động hoá các chiến lược tài chính liên quan đến USDC trên mạng lưới Arc. Người dùng duy trì 100% quyền sở hữu tài sản thông qua cơ chế uỷ quyền phạm vi hẹp (Scoped Delegation / Session Keys), trong khi hợp đồng thực thi tập trung (`SharedExecutorProxy`) và bộ kích hoạt off-chain (`KeeperEngine`) đảm bảo quy trình chạy chính xác, minh bạch và an toàn tuyệt đối.
+
+**Token Scope (Testnet):** Chỉ hỗ trợ các token thử nghiệm trên Arc Testnet gồm `USDC`, `EURC`, `cirBTC`.
 
 ### Phân kỳ Phát triển (Phased Scope)
 * **Phase 1 (MVP P0):** 
@@ -59,7 +61,7 @@ graph TD
 
     subgraph ProtocolLayer ["5. Whitelisted Arc Protocols"]
         LENDING["Arc Lending Protocol"]
-        DEX["Arc Official DEX Router"]
+      SWAP["Arc App Kit Swap Service"]
         VAULT["USDC Treasury Vaults"]
     end
 
@@ -71,8 +73,8 @@ graph TD
     EXECUTOR --> GUARD
     GUARD --> SLIPPAGE
     SLIPPAGE --> PAUSE
-    PAUSE -->|6. Execute Approved Calls| LENDING & DEX & VAULT
-    LENDING & DEX & VAULT -->|7. Emit Events| MONITOR
+    PAUSE -->|6. Execute Approved Calls| LENDING & SWAP & VAULT
+    LENDING & SWAP & VAULT -->|7. Emit Events| MONITOR
     MONITOR -->|8. Real-time Status Update| DASH
 ```
 
@@ -167,14 +169,14 @@ graph TD
 #### F-2.2: Protocol Whitelist & Call Scope Guardrails (Rào chắn Bảo vệ On-chain)
 * **Kiểm soát địa chỉ:** `SharedExecutor` duy trì `mapping(address => bool) public isWhitelistedProtocol`. Mọi giao dịch gọi tới địa chỉ ngoài Whitelist sẽ bị `revert("ERR_PROTOCOL_NOT_WHITELISTED")`.
 * **Kiểm soát hàm (Function Selector Validation):**
-  * Chỉ cho phép các hàm chuẩn của DeFi Protocol: `deposit()`, `withdraw()`, `swapExactTokensForTokens()`, `claimRewards()`.
+  * Chỉ cho phép các hàm chuẩn của DeFi Protocol: `deposit()`, `withdraw()`, `executeSwap()` (route đã resolve từ App Kit), `claimRewards()`.
   * Tuyệt đối cấm các hàm `transferFrom()` trực tiếp tới ví thứ 3 không nằm trong luồng xử lý của Recipe.
 
 #### F-2.3: Slippage & Price Impact Protection Engine (Bảo vệ Trượt giá)
-* **Mô tả:** Ngăn chặn các cuộc tấn công Sandwich / Front-running khi Keeper thực hiện Swap trên Arc DEX.
+* **Mô tả:** Ngăn chặn các cuộc tấn công Sandwich / Front-running khi Keeper thực hiện Swap qua Arc App Kit Swap.
 * **Cơ chế:**
   * Mọi bước Swap bắt buộc truyền `minAmountOut`.
-  * Trước khi Swap, Contract truy vấn giá tham chiếu từ Pyth/Chainlink Oracle hoặc TWAP của Arc DEX.
+  * Trước khi Swap, Keeper lấy route quote từ Arc App Kit Swap (https://docs.arc.io/app-kit/swap), sau đó Contract đối chiếu với giá tham chiếu từ Pyth/Chainlink Oracle.
   * Nếu $\text{ActualOutput} < \text{ExpectedOutput} \times (1 - \text{SlippageTolerance})$, giao dịch lập tức bị Revert với lỗi `ERR_SLIPPAGE_EXCEEDED`.
 
 #### F-2.4: Emergency Pause / Circuit Breaker (Cầu chì Ngắt Khẩn cấp)
@@ -199,7 +201,7 @@ sequenceDiagram
     participant K as Keeper Engine
     participant SE as Shared Executor Contract
     participant AL as Arc Lending Protocol
-    participant DEX as Arc Official DEX Router
+    participant SWAP as Arc App Kit Swap
     participant U as User Wallet / Position
 
     K->>K: Check pending reward balance >= Threshold
@@ -208,8 +210,8 @@ sequenceDiagram
     SE->>SE: Verify Session Key & Protocol Whitelist
     SE->>AL: claimReward(User)
     AL-->>SE: Transfer Reward Tokens (e.g. ARC Token)
-    SE->>DEX: swapExactTokensForTokens(ARC -> USDC, minUsdcOut)
-    DEX-->>SE: Return USDC
+    SE->>SWAP: executeSwap(ARC -> USDC, minUsdcOut, routeData)
+    SWAP-->>SE: Return USDC
     SE->>SE: Verify actual USDC >= minUsdcOut (Slippage Check)
     SE->>AL: deposit(USDC) on behalf of User
     AL-->>U: Credit aUSDC / Increase Principal Position
@@ -222,23 +224,24 @@ sequenceDiagram
   * `checkIntervalHours`: Chu kỳ kiểm tra của Keeper (mặc định: 24 giờ).
 * **Xử lý Lỗi & Ngoại lệ (Edge Cases):**
   * *Reward quá nhỏ không đủ bù phí gas:* Keeper tự động bỏ qua lượt execution cho đến khi reward đủ điều kiện.
-  * *Liquidity trên DEX quá mỏng gây trượt giá cao:* Revert giao dịch, Keeper gửi cảnh báo log và thử lại sau 6 giờ.
+  * *Route liquidity quá mỏng gây trượt giá cao:* Revert giao dịch, Keeper gửi cảnh báo log và thử lại sau 6 giờ.
 
 ---
 
-#### F-3.2: Recipe 2 - USDC Recurring DCA (P0 - MVP Core)
+#### F-3.2: Recipe 2 - USDC -> cirBTC Recurring DCA (P0 - MVP Core)
 
-* **Mục tiêu:** Tự động tích lũy tài sản chiến lược (WETH / WBTC) bằng USDC theo lịch trình cố định.
+* **Mục tiêu:** Tự động tích lũy `cirBTC` bằng USDC theo lịch trình cố định.
+* **Route Source:** Sử dụng Arc App Kit Swap API làm lớp định tuyến swap chuẩn thay cho phụ thuộc vào một DEX router cố định: https://docs.arc.io/app-kit/swap.
 * **Tần suất thực thi:** Hàng tuần / Hàng tháng (Ví dụ: 09:00 AM UTC Thứ Hai hàng tuần).
 * **Quy trình chi tiết (Detailed Workflow):**
   1. Keeper kiểm tra lịch trình kích hoạt và xác minh số dư USDC khả dụng trong ví người dùng.
-  2. Keeper thực hiện `eth_call` kiểm tra tỷ giá WETH/USDC trên Arc DEX.
+  2. Keeper lấy quote + route từ Arc App Kit Swap và thực hiện `eth_call` để xác thực đầu ra kỳ vọng.
   3. Gửi lệnh qua `SharedExecutor`: Rút lượng USDC đã cấu hình (vd: 50 USDC) từ ví người dùng qua lệnh uỷ quyền Session Key.
-  4. Thực hiện Swap USDC $\rightarrow$ WETH trên Arc DEX với `minWethOut`.
-  5. Chuyển thẳng số WETH thu được về ví cá nhân của người dùng.
+  4. Thực hiện Swap USDC $\rightarrow$ cirBTC theo route của Arc App Kit Swap với `minCirBtcOut`.
+  5. Chuyển thẳng số cirBTC thu được về ví cá nhân của người dùng.
 * **Tham số Đầu vào (Input Parameters):**
   * `dcaAmountUsdc`: Số tiền USDC cho mỗi lần mua (vd: `50000000` = 50 USDC).
-  * `targetAsset`: Địa chỉ hợp đồng của tài sản muốn mua (WETH / WBTC).
+  * `targetAssetSymbol`: Ký hiệu token đích trên Arc Testnet (`cirBTC` mặc định, chỉ chấp nhận `USDC` / `EURC` / `cirBTC` ở tầng validate cấu hình).
   * `frequency`: Chu kỳ mua (`WEEKLY` / `MONTHLY`).
   * `maxSlippageBps`: Trượt giá cho phép (`50` = 0.5%).
 * **Xử lý Lỗi & Ngoại lệ (Edge Cases):**
@@ -287,7 +290,7 @@ graph TD
   1. Keeper Event Monitor theo dõi `HealthFactor` của người dùng trên Arc Lending 24/7.
   2. Khi HF chạm ngưỡng cảnh báo ($HF < 1.15$):
      * Keeper lập tức gửi giao dịch ưu tiên cao (High Gas Priority) đến `SharedExecutor`.
-     * `SharedExecutor` rút một phần tài sản thế chấp (USDC/WETH) hoặc dùng USDC dự phòng trong ví để trả bớt khoản vay (Repay Debt).
+    * `SharedExecutor` rút một phần tài sản thế chấp (USDC/cirBTC) hoặc dùng USDC dự phòng trong ví để trả bớt khoản vay (Repay Debt).
      * Đưa Health Factor trở lại vùng an toàn ($HF \ge 1.40$).
 * **Tham số Đầu vào (Input Parameters):**
   * `minHealthFactor`: Ngưỡng HF kích hoạt bảo vệ (mặc định: `1150` = 1.15).
@@ -369,7 +372,7 @@ graph LR
 #### F-5.1: Danh sách Recipe & Luồng Kích hoạt 1-Click (1-Click Recipe Activation)
 * **Giao diện Card Recipe:**
   * Badge Rủi ro (Low / Medium / High), Thống kê APY kỳ vọng.
-  * Danh sách các Protocol tích hợp (Arc Lending logo, Arc DEX logo).
+  * Danh sách các Protocol tích hợp (Arc Lending logo, Arc App Kit Swap badge).
   * Nút "Activate Recipe".
 * **Luồng Xác nhận 3 Bước (Modal Flow):**
   1. *Bước 1 - Configuration:* Nhập số tiền, chọn tần suất/ngưỡng kích hoạt, cài đặt trượt giá.
@@ -378,9 +381,9 @@ graph LR
 
 #### F-5.2: Trình Giả lập Giao dịch (Transaction Simulation Modal)
 * **Thông tin minh bạch hiển thị cho người dùng:**
-  * **Sơ đồ luồng tiền (Asset Flow Visualizer):** `[Ví Người Dùng] -> (USDC) -> [Arc Lending] -> (Reward) -> [Arc DEX] -> (USDC) -> [Arc Lending]`.
+  * **Sơ đồ luồng tiền (Asset Flow Visualizer):** `[Ví Người Dùng] -> (USDC) -> [Arc Lending] -> (Reward) -> [Arc App Kit Swap Route] -> (USDC) -> [Arc Lending]`.
   * **Ước tính Phí Gas:** Phí Gas dự kiến tính bằng USDC (ví dụ: `~0.002 USDC` trên Arc Network).
-  * **Cảnh báo Rủi ro:** Hiển thị lưu ý hợp đồng thông minh của bên thứ 3 (Arc Lending/DEX).
+  * **Cảnh báo Rủi ro:** Hiển thị lưu ý hợp đồng thông minh của bên thứ 3 (Arc Lending/swap route destination).
 
 #### F-5.3: Portfolio Tracker & Audit Log Realtime
 * **Thông số tổng quan:**
@@ -391,7 +394,7 @@ graph LR
 | Thời gian (UTC) | Recipe | Thao tác | Số tiền (USDC) | Trạng thái | Arc Explorer Tx Hash |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | 2026-07-27 10:00 | Yield Auto-Compounder | Claim & Re-deposit | +12.45 USDC | <span style="color:green">Success</span> | [`0xabc...123`](#) |
-| 2026-07-27 09:00 | Recurring DCA | Swap USDC -> WETH | 50.00 USDC | <span style="color:green">Success</span> | [`0xdef...456`](#) |
+| 2026-07-27 09:00 | Recurring DCA | Swap USDC -> cirBTC | 50.00 USDC | <span style="color:green">Success</span> | [`0xdef...456`](#) |
 | 2026-07-26 14:30 | Yield Rebalancer | Rebalance Lending -> Vault | 1,000.00 USDC | <span style="color:red">Reverted (Slippage)</span> | [`0x789...ghi`](#) |
 
 ---
@@ -418,7 +421,7 @@ graph LR
 | Hạng mục / Tính năng | Phase 1 (MVP P0) | Phase 2 (P1 Roadmap) | Phase 3 (Community Marketplace) |
 | :--- | :---: | :---: | :---: |
 | **Recipe 1: Yield Auto-Compounder** | **Full Specs (P0)** | Nâng cấp Multi-Vault | Custom Compound Strategy |
-| **Recipe 2: Recurring DCA** | **Full Specs (P0)** | Multi-Asset Basket DCA | Limit Order Integration |
+| **Recipe 2: Recurring DCA** | **Full Specs (P0)** | USDC -> cirBTC DCA | Limit Order Integration |
 | **Recipe 3: Smart Yield Rebalancer** | **Full Specs (P0)** | AI-driven Yield Prediction | Cross-chain Rebalancing |
 | **Recipe 4: Safety Net / Stop-Loss** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Advanced Liquidation Shield |
 | **Recipe 5: Savings Stream** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Employer Payroll Stream |

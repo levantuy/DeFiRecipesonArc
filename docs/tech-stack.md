@@ -4,6 +4,7 @@
 **Status:** Approved Specification  
 **Base Documents:** [Project Vision v2.1](file:///d:/source-code/arc/DeFiRecipesonArc/docs/project-vision.md) | [Feature Specifications v2.0](file:///d:/source-code/arc/DeFiRecipesonArc/docs/features-spec.md) | [Architecture Proposal v1.0](file:///d:/source-code/arc/DeFiRecipesonArc/docs/architecture-proposal.md)  
 **Target Blockchain:** Arc Network (Chain ID: `5042002`, Native USDC Gas)  
+**Testnet Token Scope:** `USDC`, `EURC`, `cirBTC`  
 
 ---
 
@@ -42,7 +43,7 @@ graph TD
     subgraph ChainLayer ["5. Arc Network & Protocol Layer"]
         ARC["Arc Testnet (Chain ID 5042002)"]
         USDC_GAS["USDC Native Gas Engine"]
-        PROTOCOLS["Arc Lending + Arc Official DEX Router"]
+      PROTOCOLS["Arc Lending + Arc App Kit Swap Route Destinations"]
     end
 
     NEXT --> WEB3
@@ -98,7 +99,7 @@ Lớp Smart Contract được thiết kế theo mô hình **Shared Executor Prox
   * `SessionKeyRegistry.sol`: Nơi đăng ký và quản lý trạng thái hiệu lực của Session Keys từ người dùng.
 * **Cơ chế Bảo vệ On-chain (Guardrails):**
   * **Strict Function Selector Scoping:** Chỉ cho phép thực thi các hàm đã được phê duyệt trong danh sách trắng (ví dụ: `deposit`, `withdraw`, `swap`).
-  * **Target Contract Whitelisting:** Chỉ tương tác với các địa chỉ hợp đồng giao thức Arc đã qua kiểm toán (Arc Lending, Arc DEX Router).
+  * **Target Contract Whitelisting:** Chỉ tương tác với các địa chỉ hợp đồng giao thức Arc đã qua kiểm toán và các swap route destinations được resolve qua Arc App Kit Swap (https://docs.arc.io/app-kit/swap).
   * **Slippage & Output Validation:** Kiểm tra số dư hoặc lượng token nhận được sau các thao tác swap/withdraw, hủy bỏ transaction (revert) nếu tỷ lệ trượt giá vượt mức cho phép (mặc định 0.5% - 1.0%).
   * **ReentrancyGuard:** Chống tấn công tái nhập trên tất cả các hàm thực thi.
 
@@ -243,7 +244,7 @@ DeFiRecipesonArc/
 
 * **Smart Contract Testing (Foundry):**
   * **Unit Tests:** Kiểm thử từng hàm độc lập của `SharedExecutorProxy` và `RecipeGuardrail`.
-  * **Fork Tests (`forge test --fork-url`):** Chạy kiểm thử tích hợp trực tiếp trên Arc Testnet RPC fork để đảm bảo tương tác chuẩn xác với Arc Lending và Arc DEX.
+  * **Fork Tests (`forge test --fork-url`):** Chạy kiểm thử tích hợp trực tiếp trên Arc Testnet RPC fork để đảm bảo tương tác chuẩn xác với Arc Lending và các swap route destinations được resolve qua Arc App Kit Swap.
   * **Fuzzing & Invariant Tests:** Sử dụng Foundry Fuzzing để phát hiện các trường hợp góc (edge cases) liên quan đến trượt giá và tính toán số dư.
 * **Backend & Worker Testing:**
   * Kiểm thử giả lập giao dịch `eth_call` bằng Vitest.

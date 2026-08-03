@@ -7,22 +7,25 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
+    "db:migrate": "node scripts/run-migrations.js",
+    "smoke:endpoints": "node scripts/smoke-endpoints.js",
+    "cleanup:test-data": "node scripts/cleanup-test-data.js",
+    "pipeline:smoke-cleanup": "node scripts/smoke-and-cleanup.js",
     "test": "vitest run",
     "benchmark:perf": "npm run build && node dist/benchmarks/keeperPerformanceBenchmark.js",
     "alerts:check": "npm run build && node dist/observability/monitorAlerts.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0",
+    "@circle-fin/app-kit": "^1.11.0",
     "bullmq": "^5.7.0",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
+    "pg": "^8.22.0",
     "viem": "^2.13.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
-    "prisma": "^5.14.0",
+    "@types/pg": "^8.20.3",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"

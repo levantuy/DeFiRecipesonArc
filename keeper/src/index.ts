@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import http from 'node:http';
-import { PrismaClient } from '@prisma/client';
 import { createWalletClient, http as viemHttp } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
@@ -16,8 +15,7 @@ import {
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
 import { listExecutionLogs, registerOrActivateRecipe, updateRecipeStatus } from './api/recipeSyncApi';
 import { getKeeperMetricsSnapshot } from './observability/metrics';
-
-export const prisma = new PrismaClient();
+import { checkDbHealth, connectDb, countActiveRecipes, disconnectDb } from './db/client';
 
 export function getKeeperAccount() {
   return privateKeyToAccount(getKeeperPrivateKey());
@@ -84,7 +82,7 @@ function createHealthServer(port: number) {
     if (pathName === '/recipes/register' && method === 'POST') {
       try {
         const body = await readJsonBody(req);
-        const payload = await registerOrActivateRecipe(prisma, body);
+        const payload = await registerOrActivateRecipe(body);
         setJsonResponse(res, 200, payload);
       } catch (error: unknown) {
         setJsonResponse(res, 400, {
@@ -98,7 +96,7 @@ function createHealthServer(port: number) {
     if (pathName === '/recipes/status' && method === 'POST') {
       try {
         const body = await readJsonBody(req);
-        const payload = await updateRecipeStatus(prisma, body);
+        const payload = await updateRecipeStatus(body);
         setJsonResponse(res, 200, payload);
       } catch (error: unknown) {
         setJsonResponse(res, 400, {
@@ -111,7 +109,7 @@ function createHealthServer(port: number) {
 
     if (pathName === '/recipes/logs' && method === 'GET') {
       try {
-        const payload = await listExecutionLogs(prisma, {
+        const payload = await listExecutionLogs({
           userAddress: requestUrl.searchParams.get('userAddress') || undefined,
           limit: requestUrl.searchParams.get('limit') || undefined,
         });
@@ -140,7 +138,7 @@ function createHealthServer(port: number) {
     }
 
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await checkDbHealth();
       setJsonResponse(res, 200, {
         status: 'ok',
         service: 'keeper',
@@ -180,10 +178,10 @@ export async function startKeeperEngine() {
   console.log(`[Config] Recipe Guardrail       : ${CONTRACT_ADDRESSES.recipeGuardrail}`);
   console.log(`[Config] Session Key Registry   : ${CONTRACT_ADDRESSES.sessionKeyRegistry}`);
 
-  // Test Database Connection via Prisma
+  // Test database connectivity
   try {
-    await prisma.$connect();
-    const activeRecipesCount = await prisma.activeRecipe.count();
+    await connectDb();
+    const activeRecipesCount = await countActiveRecipes();
     console.log(`[Database] PostgreSQL connected successfully. Active recipes in DB: ${activeRecipesCount}`);
   } catch (err: unknown) {
     console.warn(`[Database Warning] Could not query database: ${getErrorMessage(err)}`);
@@ -205,7 +203,7 @@ export async function startKeeperEngine() {
     await new Promise<void>((resolve) => {
       healthServer.close(() => resolve());
     });
-    await prisma.$disconnect();
+    await disconnectDb();
     process.exit(0);
   });
 
@@ -219,7 +217,7 @@ export async function startKeeperEngine() {
     await new Promise<void>((resolve) => {
       healthServer.close(() => resolve());
     });
-    await prisma.$disconnect();
+    await disconnectDb();
     process.exit(0);
   });
 

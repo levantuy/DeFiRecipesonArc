@@ -8,6 +8,8 @@ export const CONTRACT_ADDRESSES = {
   sharedExecutorProxy: (process.env.NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS ||
     '0xcbd2de404cb02c45b8688883e4321f887a6f2fc2') as `0x${string}`,
   usdc: '0x3600000000000000000000000000000000000000' as `0x${string}`,
+  eurc: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as `0x${string}`,
+  cirBtc: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as `0x${string}`,
 };
 
 export const SESSION_KEY_REGISTRY_ABI = [

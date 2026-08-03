@@ -8,7 +8,7 @@ build/
 
 # Database
 *.db
-prisma/*.db
+db-migrations/*.db
 
 # Environment Variables
 .env

@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
-import { PrismaClient, ExecutionStatus } from '@prisma/client';
+import { ExecutionStatus } from '../db/types';
 import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 import { ARC_TESTNET_CONFIG, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { getKeeperPrivateKey, RUNTIME_CONFIG } from '../config/runtime';
@@ -12,8 +12,8 @@ import {
   recordQueueLeadTimeToConfirmed,
   recordQueueLeadTimeToSubmitted,
 } from '../observability/metrics';
-
-const prisma = new PrismaClient();
+import { executionLogsRepository } from '../db/repositories/executionLogsRepository';
+import { recipesRepository } from '../db/repositories/recipesRepository';
 
 const REDIS_URL = RUNTIME_CONFIG.redisUrl;
 const TX_RETRY_BASE_DELAY_MS = 1500;
@@ -107,6 +107,9 @@ export interface RecipeExecutionJobData {
   executorProxyAddress: `0x${string}`;
   targetProtocolAddress: `0x${string}`;
   callData: `0x${string}`;
+  // Forwarded to SharedExecutorProxy.executeRecipeStep(minAmountOut).
+  // For DCA, this is delegated USDC spend accounting (not swap output minimum).
+  // Swap output slippage floor is encoded inside callData (amountOutMin).
   minAmountOut: string;
   keeperAddress: `0x${string}`;
   queueEnqueuedAtMs?: number;
@@ -148,13 +151,11 @@ async function markExecutionReverted(executionLogId: string | null, message: str
     return;
   }
 
-  await prisma.executionLog
-    .update({
-      where: { id: executionLogId },
-      data: {
-        status: ExecutionStatus.REVERTED,
-        errorMessage: message,
-      },
+  await executionLogsRepository
+    .updateLogStatus({
+      executionLogId,
+      status: ExecutionStatus.REVERTED,
+      errorMessage: message,
     })
     .catch(() => {
       console.warn('[Keeper Engine] Failed to persist reverted execution log.');
@@ -174,24 +175,19 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
   }
 
   if (data.executionLogId) {
-    await prisma.executionLog
-      .update({
-        where: { id: data.executionLogId },
-        data: {
-          status: ExecutionStatus.CONFIRMED,
-          gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
-        },
+    await executionLogsRepository
+      .updateLogStatus({
+        executionLogId: data.executionLogId,
+        status: ExecutionStatus.CONFIRMED,
+        gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
       })
       .catch(() => {
         console.warn('[Keeper Engine] Failed to persist confirmed execution log.');
       });
   }
 
-  await prisma.activeRecipe
-    .update({
-      where: { id: data.recipeId },
-      data: { lastExecutedAt: new Date() },
-    })
+  await recipesRepository
+    .updateLastExecutedAt(data.recipeId, new Date())
     .catch(() => {
       console.warn(`[Keeper Engine] Failed to update lastExecutedAt for recipeId=${data.recipeId}.`);
     });
@@ -225,15 +221,10 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   let hasPersistedRecipe = false;
 
   try {
-    const recipeExists = await prisma.activeRecipe.findUnique({ where: { id: data.recipeId } });
+    const recipeExists = await recipesRepository.findById(data.recipeId);
     if (recipeExists) {
       hasPersistedRecipe = true;
-      const log = await prisma.executionLog.create({
-        data: {
-          activeRecipeId: data.recipeId,
-          status: ExecutionStatus.SIMULATING,
-        },
-      });
+      const log = await executionLogsRepository.createSimulatingLog(data.recipeId);
       executionLogId = log.id;
     }
   } catch {
@@ -260,13 +251,11 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     if (!simResult.success) {
       console.error(`[Simulation Failed] ${context}: ${simResult.errorMessage}`);
       if (executionLogId) {
-        await prisma.executionLog
-          .update({
-            where: { id: executionLogId },
-            data: {
-              status: ExecutionStatus.SIMULATION_FAILED,
-              errorMessage: simResult.errorMessage,
-            },
+        await executionLogsRepository
+          .updateLogStatus({
+            executionLogId,
+            status: ExecutionStatus.SIMULATION_FAILED,
+            errorMessage: simResult.errorMessage,
           })
           .catch(() => {
             console.warn('[Keeper Engine] Failed to persist simulation failure log.');
@@ -350,14 +339,12 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   }
 
   if (executionLogId) {
-    await prisma.executionLog
-      .update({
-        where: { id: executionLogId },
-        data: {
-          status: ExecutionStatus.SUBMITTED,
-          txHash: hash,
-          executedAt: new Date(),
-        },
+    await executionLogsRepository
+      .updateLogStatus({
+        executionLogId,
+        status: ExecutionStatus.SUBMITTED,
+        txHash: hash,
+        executedAt: new Date(),
       })
       .catch(() => {
         console.warn('[Keeper Engine] Failed to persist submitted execution log.');

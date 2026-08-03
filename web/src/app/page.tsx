@@ -32,7 +32,7 @@ type TxLifecycleStatus = 'idle' | 'submitted' | 'confirmed' | 'timeout' | 'faile
 interface ActiveRecipeState {
   id: string;
   recipeType: string;
-  targetProtocolAddress: `0x${string}`;
+  targetProtocolAddress?: `0x${string}`;
   status: RecipeLifecycleStatus;
   txLifecycleStatus: TxLifecycleStatus;
   maxSlippageBps: number;
@@ -381,25 +381,27 @@ export default function Home() {
       const selectedRecipeDefinition = RECIPES.find((recipe) => recipe.id === selectedRecipeSnapshot.id);
       const checkIntervalHours = selectedRecipeDefinition?.defaultIntervalHours || 24;
 
-      let keeperSyncWarning = '';
-      try {
-        await syncKeeperRecipe({
-          action: 'register',
-          userAddress: connectedAddress,
-          recipeType: selectedRecipeSnapshot.recipeType,
-          recipeName: selectedRecipeSnapshot.name,
-          targetProtocol: selectedRecipeSnapshot.targetProtocol,
-          targetProtocolAddress: selectedRecipeSnapshot.targetProtocolAddress,
+      await syncKeeperRecipe({
+        action: 'register',
+        userAddress: connectedAddress,
+        recipeType: selectedRecipeSnapshot.recipeType,
+        recipeName: selectedRecipeSnapshot.name,
+        ...(selectedRecipeSnapshot.targetProtocolAddress
+          ? { targetProtocolAddress: selectedRecipeSnapshot.targetProtocolAddress }
+          : {}),
+        ...(selectedRecipeSnapshot.swapProvider
+          ? { swapProvider: selectedRecipeSnapshot.swapProvider }
+          : {}),
+        maxSlippageBps,
+        maxUsdcSpendLimit: DEFAULT_MAX_USDC_SPEND_PER_TX,
+        parametersJson: {
+          checkIntervalHours,
           maxSlippageBps,
-          maxUsdcSpendLimit: DEFAULT_MAX_USDC_SPEND_PER_TX,
-          parametersJson: {
-            checkIntervalHours,
-            maxSlippageBps,
-          },
-        });
-      } catch (syncError: unknown) {
-        keeperSyncWarning = ` Keeper sync warning: ${getErrorMessage(syncError)}`;
-      }
+          ...(selectedRecipeSnapshot.targetAssetSymbol
+            ? { targetAssetSymbol: selectedRecipeSnapshot.targetAssetSymbol }
+            : {}),
+        },
+      });
 
       setActiveRecipes((previous) => ({
         ...previous,
@@ -421,7 +423,7 @@ export default function Home() {
         : `Delegation submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${delegationResult.txHash} `;
 
       setFeedbackMessage(
-        `${selectedRecipeSnapshot.name} activated. ${delegationMessage}${keeperSyncWarning}`
+        `${selectedRecipeSnapshot.name} activated. ${delegationMessage}`
       );
 
       if (delegationResult.txHash && delegationResult.submittedAtMs) {

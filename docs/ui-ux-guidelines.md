@@ -43,7 +43,7 @@ Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Comp
 +-------------------------------------------------------------+
 |  ROUTING & ASSET FLOW                                       |
 |  [1. Arc Lending] Withdraw 500 USDC                         |
-|  [2. Arc DEX Router] Swap 500 USDC -> Vault Shares           |
+|  [2. Arc App Kit Swap] Swap 500 USDC -> Vault Shares         |
 |  [3. Deposit] Auto-stake to High Yield Vault                |
 +-------------------------------------------------------------+
 |  PARAMETERS & PROTECTION                                    |
@@ -65,7 +65,7 @@ Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Comp
 
 Khi ủy quyền cho Keeper Engine chạy tự động, giao diện phải trình bày các **Hạn chế Bảo vệ (Guardrails)** một cách trực quan:
 
-1. **Phạm vi Quyền hạn (Scope):** Liệt kê các Smart Contract mà Keeper được phép gọi (ví dụ: *Chỉ tương tác với Arc Lending & DEX Router*).
+1. **Phạm vi Quyền hạn (Scope):** Liệt kê các Smart Contract mà Keeper được phép gọi (ví dụ: *Chỉ tương tác với Arc Lending & các swap route destinations được Arc App Kit Swap resolve*).
 2. **Thời gian Hiệu lực (Expiry Timer):** Hiển thị thời gian hết hạn của Session Key (ví dụ: *Hết hạn sau 7 ngày*).
 3. **Giới hạn Giá trị Giao dịch (Max Value per Execution):** Cấu hình hạn mức USDC tối đa cho mỗi lần Keeper tự động thao tác.
 4. **Trạng thái Cảnh báo:** Khi Session Key sắp hết hạn (dưới 24h), hiển thị thông báo nhắc nhở 1-Click Renew trên Dashboard.

@@ -18,6 +18,20 @@ const { writeContractMock, createWalletClientMock } = vi.hoisted(() => {
   };
 });
 
+const {
+  findByIdMock,
+  updateLastExecutedAtMock,
+  createSimulatingLogMock,
+  updateLogStatusMock,
+} = vi.hoisted(() => {
+  return {
+    findByIdMock: vi.fn(),
+    updateLastExecutedAtMock: vi.fn(),
+    createSimulatingLogMock: vi.fn(),
+    updateLogStatusMock: vi.fn(),
+  };
+});
+
 vi.mock('viem', async () => {
   const actual = await vi.importActual<typeof import('viem')>('viem');
   return {
@@ -26,10 +40,28 @@ vi.mock('viem', async () => {
   };
 });
 
+vi.mock('../db/repositories/recipesRepository', () => ({
+  recipesRepository: {
+    findById: findByIdMock,
+    updateLastExecutedAt: updateLastExecutedAtMock,
+  },
+}));
+
+vi.mock('../db/repositories/executionLogsRepository', () => ({
+  executionLogsRepository: {
+    createSimulatingLog: createSimulatingLogMock,
+    updateLogStatus: updateLogStatusMock,
+  },
+}));
+
 describe('Queue Scheduler & Job Execution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     RUNTIME_CONFIG.keeperSyncConfirmationInHotPath = true;
+    findByIdMock.mockResolvedValue(null);
+    updateLastExecutedAtMock.mockResolvedValue(undefined);
+    createSimulatingLogMock.mockResolvedValue({ id: 'log-1' });
+    updateLogStatusMock.mockResolvedValue(undefined);
   });
 
   const sampleJobData: RecipeExecutionJobData = {

@@ -46,7 +46,7 @@ function isAddress(value: string): value is `0x${string}` {
 
 const RECIPE_NAME_BY_TYPE: Record<string, string> = {
   AUTO_COMPOUNDER: 'USDC Yield Auto-Compounder',
-  RECURRING_DCA: 'USDC Recurring DCA',
+  RECURRING_DCA: 'USDC -> cirBTC Recurring DCA',
   SMART_YIELD_REBALANCER: 'USDC Smart Yield Rebalancer',
   SAFETY_NET: 'USDC Safety Net',
   SAVINGS_STREAM: 'USDC Savings Stream',

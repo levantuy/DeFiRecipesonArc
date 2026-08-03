@@ -4,3 +4,4 @@ export * from './unifiedBalanceClient';
 export * from './gatewayClient';
 export * from './providers';
 export * from './factory';
+export * from './dcaSwapRouteClient';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RecipeType, RecipeStatus, ExecutionStatus } from '@prisma/client';
+import { RecipeType, RecipeStatus, ExecutionStatus } from '../db/types';
 
 describe('Database Enum & Model Definitions', () => {
   it('should include all required RecipeType enums', () => {

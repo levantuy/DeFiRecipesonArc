@@ -1,15 +1,23 @@
-import { Prisma, PrismaClient, RecipeStatus, RecipeType } from '@prisma/client';
+import { recipesRepository } from '../db/repositories/recipesRepository';
+import { executionLogsRepository } from '../db/repositories/executionLogsRepository';
+import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types';
 import type { Address } from 'viem';
 import { publicClient } from '../simulation/staticSimulationEngine';
+import {
+  parseDcaMaxSlippageBpsStrict,
+  parseDcaTargetAssetSymbolStrict,
+} from '../config/dcaRouting';
 
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const RECIPE_TYPE_SET = new Set(Object.values(RecipeType));
 const RECIPE_STATUS_SET = new Set(Object.values(RecipeStatus));
+const SWAP_PROVIDER_SET = new Set(Object.values(SwapProvider));
 
 interface RegisterRecipePayload {
   userAddress?: unknown;
   recipeType?: unknown;
   targetProtocol?: unknown;
+  swapProvider?: unknown;
   parametersJson?: unknown;
 }
 
@@ -33,10 +41,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function toInputJsonValue(value: unknown): Prisma.InputJsonValue {
-  return value as Prisma.InputJsonValue;
-}
-
 function normalizeAddress(value: unknown, fieldName: string): string {
   if (typeof value !== 'string' || !ADDRESS_REGEX.test(value)) {
     throw new Error(`${fieldName} must be a valid 20-byte hex address.`);
@@ -58,11 +62,19 @@ function parseRecipeStatus(value: unknown): RecipeStatus {
   return value as RecipeStatus;
 }
 
+function parseSwapProvider(value: unknown): SwapProvider {
+  if (typeof value !== 'string' || !SWAP_PROVIDER_SET.has(value as SwapProvider)) {
+    throw new Error(`swapProvider must be one of: ${Array.from(SWAP_PROVIDER_SET).join(', ')}`);
+  }
+  return value as SwapProvider;
+}
+
 function parseRegisterPayload(rawBody: unknown): {
   userAddress: string;
   recipeType: RecipeType;
-  targetProtocol: string;
-  parametersJson: Prisma.InputJsonValue;
+  targetProtocol: string | null;
+  swapProvider: SwapProvider | null;
+  parametersJson: JsonObject;
 } {
   if (!isRecord(rawBody)) {
     throw new Error('Request body must be a JSON object.');
@@ -71,20 +83,44 @@ function parseRegisterPayload(rawBody: unknown): {
   const body = rawBody as RegisterRecipePayload;
   const userAddress = normalizeAddress(body.userAddress, 'userAddress');
   const recipeType = parseRecipeType(body.recipeType);
-  const targetProtocol = normalizeAddress(body.targetProtocol, 'targetProtocol');
+  const swapProvider = body.swapProvider === undefined
+    ? null
+    : parseSwapProvider(body.swapProvider);
+  const targetProtocol = body.targetProtocol === undefined
+    ? null
+    : normalizeAddress(body.targetProtocol, 'targetProtocol');
 
-  let parametersJson: Prisma.InputJsonValue = {};
+  let parametersJson: JsonObject = {};
   if (body.parametersJson !== undefined) {
     if (!isRecord(body.parametersJson)) {
       throw new Error('parametersJson must be a JSON object when provided.');
     }
-    parametersJson = toInputJsonValue(body.parametersJson);
+    parametersJson = body.parametersJson;
+  }
+
+  if (recipeType === RecipeType.RECURRING_DCA) {
+    if (!targetProtocol && swapProvider !== 'ARC_APP_KIT_SWAP') {
+      throw new Error('RECURRING_DCA requires targetProtocol or swapProvider=ARC_APP_KIT_SWAP.');
+    }
+
+    if (isRecord(parametersJson) && (parametersJson as Record<string, unknown>).maxSlippageBps !== undefined) {
+      parseDcaMaxSlippageBpsStrict((parametersJson as Record<string, unknown>).maxSlippageBps);
+    }
+
+    if (isRecord(parametersJson) && (parametersJson as Record<string, unknown>).targetAssetSymbol !== undefined) {
+      parseDcaTargetAssetSymbolStrict((parametersJson as Record<string, unknown>).targetAssetSymbol);
+    }
+  }
+
+  if (recipeType !== RecipeType.RECURRING_DCA && !targetProtocol && !swapProvider) {
+    throw new Error('Either targetProtocol or swapProvider is required.');
   }
 
   return {
     userAddress,
     recipeType,
     targetProtocol,
+    swapProvider,
     parametersJson,
   };
 }
@@ -120,7 +156,6 @@ function parseStatusPayload(rawBody: unknown): {
 }
 
 export async function registerOrActivateRecipe(
-  prisma: PrismaClient,
   rawBody: unknown
 ): Promise<Record<string, unknown>> {
   const payload = parseRegisterPayload(rawBody);
@@ -131,24 +166,23 @@ export async function registerOrActivateRecipe(
 
   console.log(`[Keeper API] Register/Activate requested ${context}`);
 
-  await assertTargetProtocolHasCode(payload.targetProtocol);
+  if (payload.targetProtocol) {
+    await assertTargetProtocolHasCode(payload.targetProtocol);
+  }
 
-  const existingRecipe = await prisma.activeRecipe.findFirst({
-    where: {
-      userAddress: payload.userAddress,
-      recipeType: payload.recipeType,
-      targetProtocol: payload.targetProtocol,
-    },
-    orderBy: { createdAt: 'desc' },
+  const existingRecipe = await recipesRepository.findMatchingForRegistration({
+    userAddress: payload.userAddress,
+    recipeType: payload.recipeType,
+    targetProtocol: payload.targetProtocol,
+    swapProvider: payload.swapProvider,
   });
 
   if (existingRecipe) {
-    const updated = await prisma.activeRecipe.update({
-      where: { id: existingRecipe.id },
-      data: {
-        status: RecipeStatus.ACTIVE,
-        parametersJson: payload.parametersJson,
-      },
+    const updated = await recipesRepository.updateForActivation(existingRecipe.id, {
+      status: RecipeStatus.ACTIVE,
+      targetProtocol: payload.targetProtocol,
+      swapProvider: payload.swapProvider,
+      parametersJson: payload.parametersJson,
     });
 
     console.log(
@@ -168,23 +202,17 @@ export async function registerOrActivateRecipe(
         recipeType: updated.recipeType,
         status: updated.status,
         targetProtocol: updated.targetProtocol,
+        swapProvider: updated.swapProvider ?? null,
       },
     };
   }
 
-  const created = await prisma.activeRecipe.create({
-    data: {
-      recipeType: payload.recipeType,
-      status: RecipeStatus.ACTIVE,
-      targetProtocol: payload.targetProtocol,
-      parametersJson: payload.parametersJson,
-      user: {
-        connectOrCreate: {
-          where: { walletAddress: payload.userAddress },
-          create: { walletAddress: payload.userAddress },
-        },
-      },
-    },
+  const created = await recipesRepository.createWithUserConnectOrCreate({
+    userAddress: payload.userAddress,
+    recipeType: payload.recipeType,
+    targetProtocol: payload.targetProtocol,
+    swapProvider: payload.swapProvider,
+    parametersJson: payload.parametersJson,
   });
 
   console.log(
@@ -204,12 +232,12 @@ export async function registerOrActivateRecipe(
       recipeType: created.recipeType,
       status: created.status,
       targetProtocol: created.targetProtocol,
+      swapProvider: created.swapProvider ?? null,
     },
   };
 }
 
 export async function updateRecipeStatus(
-  prisma: PrismaClient,
   rawBody: unknown
 ): Promise<Record<string, unknown>> {
   const payload = parseStatusPayload(rawBody);
@@ -220,23 +248,14 @@ export async function updateRecipeStatus(
 
   console.log(`[Keeper API] Status update requested ${context} targetStatus=${payload.status}`);
 
-  const existingRecipe = await prisma.activeRecipe.findFirst({
-    where: {
-      userAddress: payload.userAddress,
-      recipeType: payload.recipeType,
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
+  const existingRecipe = await recipesRepository.findLatestByUserAndType(payload.userAddress, payload.recipeType);
 
   if (!existingRecipe) {
     console.warn(`[Keeper API] Status update skipped - recipe not found ${context}`);
     throw new Error('No matching recipe found to update status.');
   }
 
-  const updated = await prisma.activeRecipe.update({
-    where: { id: existingRecipe.id },
-    data: { status: payload.status },
-  });
+  const updated = await recipesRepository.updateStatus(existingRecipe.id, payload.status);
 
   console.log(
     `[Keeper API] Status updated ${recipeLogContext({
@@ -254,6 +273,7 @@ export async function updateRecipeStatus(
       recipeType: updated.recipeType,
       status: updated.status,
       targetProtocol: updated.targetProtocol,
+      swapProvider: updated.swapProvider ?? null,
     },
   };
 }
@@ -303,30 +323,13 @@ function toRelativeTime(timestamp: Date): string {
 }
 
 export async function listExecutionLogs(
-  prisma: PrismaClient,
   rawQuery: unknown
 ): Promise<Record<string, unknown>> {
   const payload = parseListExecutionLogsPayload(rawQuery);
 
-  const logs = await prisma.executionLog.findMany({
-    where: payload.userAddress
-      ? {
-        recipe: {
-          userAddress: payload.userAddress,
-        },
-      }
-      : undefined,
-    include: {
-      recipe: {
-        select: {
-          id: true,
-          recipeType: true,
-          userAddress: true,
-        },
-      },
-    },
-    orderBy: { simulatedAt: 'desc' },
-    take: payload.limit,
+  const logs = await executionLogsRepository.listRecentLogs({
+    userAddress: payload.userAddress,
+    limit: payload.limit,
   });
 
   return {
@@ -336,8 +339,8 @@ export async function listExecutionLogs(
       return {
         id: log.id,
         recipeId: log.activeRecipeId,
-        recipeType: log.recipe.recipeType,
-        userAddress: log.recipe.userAddress,
+        recipeType: log.recipeType,
+        userAddress: log.recipeUserAddress,
         txHash: log.txHash,
         timestamp: toRelativeTime(eventTimestamp),
         timestampIso: eventTimestamp.toISOString(),

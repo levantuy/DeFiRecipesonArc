@@ -29,7 +29,7 @@ export function buildAutoCompounderCallData(userAddress: Address): Hex {
  */
 export function buildDcaCallData(
   usdcAmount: bigint,
-  minAmountOut: bigint,
+  minSwapAssetOut: bigint,
   usdcToken: Address,
   targetAsset: Address,
   recipient: Address
@@ -38,7 +38,7 @@ export function buildDcaCallData(
   return encodeFunctionData({
     abi: DEX_ROUTER_ABI,
     functionName: 'swapExactTokensForTokens',
-    args: [usdcAmount, minAmountOut, [usdcToken, targetAsset], recipient, deadline],
+    args: [usdcAmount, minSwapAssetOut, [usdcToken, targetAsset], recipient, deadline],
   });
 }
 
