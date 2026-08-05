@@ -30,6 +30,10 @@ interface CreateRecipePayload {
   parametersJson?: Record<string, unknown>;
 }
 
+interface KeeperRuntimeConfigApiPayload {
+  action?: string;
+}
+
 const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_DCA_MAX_SLIPPAGE_BPS = 100;
 const MIN_DCA_SLIPPAGE_BPS = 10;
@@ -137,7 +141,44 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as CreateRecipePayload;
+    const body = (await request.json()) as CreateRecipePayload | KeeperRuntimeConfigApiPayload;
+
+    if (body.action === 'keeperRuntimeConfig') {
+      const healthResponse = await fetch(`${getKeeperApiBaseUrl()}/healthz`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+      });
+
+      const healthData = (await healthResponse.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!healthResponse.ok || !healthData) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Failed to fetch keeper runtime config (status ${healthResponse.status}).`,
+          },
+          { status: 502 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        runtime: {
+          keeperAddress:
+            typeof healthData.keeperAddress === 'string' ? healthData.keeperAddress : null,
+          chainId:
+            typeof healthData.chainId === 'number' ? healthData.chainId : null,
+          contracts:
+            typeof healthData.contracts === 'object' && healthData.contracts !== null
+              ? healthData.contracts
+              : null,
+          timestamp:
+            typeof healthData.timestamp === 'string' ? healthData.timestamp : null,
+        },
+      });
+    }
 
     if (body.action === 'allowancePrecheck') {
       if (!body.userAddress || body.recipeType !== 'RECURRING_DCA') {

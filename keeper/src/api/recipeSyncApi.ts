@@ -490,7 +490,10 @@ function getDcaDecodedSpenderCandidates(callData: `0x${string}`): `0x${string}`[
   const fallbackCandidates = [
     extractAddressWordFromCalldata(callData, 1),
     extractAddressWordFromCalldata(callData, 3),
-  ].filter((value): value is `0x${string}` => Boolean(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000');
+  ].filter(
+    (value): value is `0x${string}` =>
+      value !== null && value.toLowerCase() !== '0x0000000000000000000000000000000000000000'
+  );
 
   try {
     const decoded = decodeFunctionData({
@@ -559,6 +562,20 @@ function getDcaAllowanceSpenderCandidates(
   ).sort() as `0x${string}`[];
 }
 
+function getDcaStrictRequiredSpenders(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | undefined
+): `0x${string}`[] {
+  const selector = extractSelectorFromCallData(callData).toLowerCase();
+  if (selector === DCA_SWAP_SELECTOR) {
+    return normalizeDcaSpenderCandidates([CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`]);
+  }
+
+  const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
+  return normalizeDcaSpenderCandidates([runtimeSpender]);
+}
+
 function parseDcaAllowancePrecheckPayload(rawBody: unknown): {
   userAddress: `0x${string}`;
   totalBudgetBaseUnits: bigint;
@@ -614,6 +631,11 @@ export async function precheckDcaAllowance(
     routePlan.targetProtocolAddress,
     routePlan.spenderAddress
   );
+  const strictRequiredSpenders = getDcaStrictRequiredSpenders(
+    routePlan.callData,
+    routePlan.targetProtocolAddress,
+    routePlan.spenderAddress
+  );
 
   const allowanceBySpender: Record<string, string> = {};
   for (const spender of requiredSpenders) {
@@ -630,11 +652,11 @@ export async function precheckDcaAllowance(
   const decodedSpenders = getDcaDecodedSpenderCandidates(routePlan.callData);
   const requiredForSchedulerBaseUnits = payload.perExecutionBaseUnits.toString();
   const requiredForActivationBaseUnits = payload.totalBudgetBaseUnits.toString();
-  const isEnoughForScheduler = requiredSpenders.every((spender) => {
+  const isEnoughForScheduler = strictRequiredSpenders.every((spender) => {
     const allowance = BigInt(allowanceBySpender[spender.toLowerCase()] || '0');
     return allowance >= payload.perExecutionBaseUnits;
   });
-  const isEnoughForActivation = requiredSpenders.every((spender) => {
+  const isEnoughForActivation = strictRequiredSpenders.every((spender) => {
     const allowance = BigInt(allowanceBySpender[spender.toLowerCase()] || '0');
     return allowance >= payload.totalBudgetBaseUnits;
   });
@@ -652,7 +674,8 @@ export async function precheckDcaAllowance(
       currentAllowanceBaseUnits,
       requiredForSchedulerBaseUnits,
       requiredForActivationBaseUnits,
-      requiredSpenders,
+      requiredSpenders: strictRequiredSpenders,
+      advisorySpenders: requiredSpenders,
       allowanceBySpender,
       isEnoughForScheduler,
       isEnoughForActivation,

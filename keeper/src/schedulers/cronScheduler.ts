@@ -365,7 +365,7 @@ function getDcaDecodedSpenderCandidates(callData: `0x${string}`): `0x${string}`[
   const fallbackCandidates = [
     extractAddressWordFromCalldata(callData, 1),
     extractAddressWordFromCalldata(callData, 3),
-  ].filter((value): value is `0x${string}` => Boolean(value) && value.toLowerCase() !== '0x0000000000000000000000000000000000000000');
+  ].filter((value): value is `0x${string}` => value !== null && value.toLowerCase() !== '0x0000000000000000000000000000000000000000');
 
   try {
     const decoded = decodeFunctionData({
@@ -443,6 +443,20 @@ function getDcaAllowanceSpenderCandidates(
   return normalizeDcaSpenderCandidates(
     [runtimeSpender, ...decodedSpenders, targetProtocol, CONTRACT_ADDRESSES.sharedExecutorProxy]
   ).sort() as `0x${string}`[];
+}
+
+function getDcaStrictRequiredSpenders(
+  callData: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  routeSpenderAddress: `0x${string}` | null
+): `0x${string}`[] {
+  const selector = extractSelectorFromCallData(callData).toLowerCase();
+  if (selector === DCA_SWAP_SELECTOR) {
+    return normalizeDcaSpenderCandidates([CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`]);
+  }
+
+  const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
+  return normalizeDcaSpenderCandidates([runtimeSpender]);
 }
 
 function maybeLogSelectorNotAllowedHint(
@@ -1043,6 +1057,11 @@ export async function pollAndTriggerActiveRecipes() {
             targetProtocol as `0x${string}`,
             routeSpenderAddress
           );
+          const strictRequiredSpenders = getDcaStrictRequiredSpenders(
+            callData,
+            targetProtocol as `0x${string}`,
+            routeSpenderAddress
+          );
           const selectorHex = extractSelectorFromCallData(callData);
           const runtimeSpender = resolveDcaAllowanceSpenderAddress(
             callData,
@@ -1051,9 +1070,10 @@ export async function pollAndTriggerActiveRecipes() {
           );
           const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
           console.log(
-            `[Cron Scheduler Debug] DCA allowance precheck ${context} selector=${selectorHex} runtimeSpender=${runtimeSpender} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()} candidateSpenders=${spenderCandidates.join(',')} decodedAbiAddresses=${decodedSpenders.join(',') || 'none'}`
+            `[Cron Scheduler Debug] DCA allowance precheck ${context} selector=${selectorHex} runtimeSpender=${runtimeSpender} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()} strictRequiredSpenders=${strictRequiredSpenders.join(',')} candidateSpenders=${spenderCandidates.join(',')} decodedAbiAddresses=${decodedSpenders.join(',') || 'none'}`
           );
           const insufficient: Array<{ spender: `0x${string}`; allowance: bigint }> = [];
+          const advisoryInsufficient: Array<{ spender: `0x${string}`; allowance: bigint }> = [];
 
           for (const spender of spenderCandidates) {
             const currentAllowance = await getUsdcAllowance(recipe.userAddress as `0x${string}`, spender);
@@ -1061,7 +1081,11 @@ export async function pollAndTriggerActiveRecipes() {
               `[Cron Scheduler Debug] DCA allowance detail ${context} spender=${spender} currentAllowanceBaseUnits=${currentAllowance?.toString() ?? 'null'} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}`
             );
             if (currentAllowance !== null && currentAllowance < requiredUsdcAllowanceBaseUnits) {
-              insufficient.push({ spender, allowance: currentAllowance });
+              if (strictRequiredSpenders.includes(spender)) {
+                insufficient.push({ spender, allowance: currentAllowance });
+              } else {
+                advisoryInsufficient.push({ spender, allowance: currentAllowance });
+              }
             }
           }
 
@@ -1083,6 +1107,17 @@ export async function pollAndTriggerActiveRecipes() {
             }
 
             continue;
+          }
+
+          if (advisoryInsufficient.length > 0) {
+            const details = advisoryInsufficient
+              .map((entry) => `spender=${entry.spender} currentAllowanceBaseUnits=${entry.allowance.toString()}`)
+              .join('; ');
+            console.warn(
+              `[Cron Scheduler Notice] DCA advisory spender allowance is below perExecution spend ${context}. ` +
+              `${details} requiredBaseUnits=${requiredUsdcAllowanceBaseUnits.toString()}. ` +
+              `Continuing execution because runtime spender allowance is sufficient.`
+            );
           }
         }
 

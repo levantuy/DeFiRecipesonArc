@@ -66,6 +66,17 @@ interface DcaAllowancePrecheckApiResponse {
   error?: string;
 }
 
+interface KeeperRuntimeConfigApiResponse {
+  success?: boolean;
+  runtime?: {
+    keeperAddress?: string | null;
+    chainId?: number | null;
+    contracts?: Record<string, unknown> | null;
+    timestamp?: string | null;
+  };
+  error?: string;
+}
+
 const ERC20_ALLOWANCE_AND_APPROVE_ABI = [
   {
     type: 'function',
@@ -220,13 +231,59 @@ export default function Home() {
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const [runtimeKeeperSessionKeyAddress, setRuntimeKeeperSessionKeyAddress] = useState<`0x${string}` | null>(null);
+  const [keeperAddressSyncWarning, setKeeperAddressSyncWarning] = useState<string>('');
   const keeperSessionKeyAddressRaw = (process.env.NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS || '').trim();
   const keeperSessionKeyAddress = isAddress(keeperSessionKeyAddressRaw)
     ? keeperSessionKeyAddressRaw
     : null;
-  const configErrorMessage = keeperSessionKeyAddress
-    ? ''
-    : 'Missing NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS in web/.env. Production delegation is blocked until this value is configured and dev server restarted.';
+  const configErrorMessage =
+    keeperSessionKeyAddress || runtimeKeeperSessionKeyAddress
+      ? ''
+      : 'Unable to resolve keeper session key address from web/.env or keeper runtime health endpoint. Delegation is blocked until keeper is reachable and configuration is synced.';
+
+  const resolveKeeperSessionKeyAddress = async (): Promise<`0x${string}`> => {
+    try {
+      const response = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'keeperRuntimeConfig' }),
+      });
+
+      const data = (await response.json().catch(() => null)) as KeeperRuntimeConfigApiResponse | null;
+      const runtimeAddressCandidate = data?.runtime?.keeperAddress?.trim() || '';
+      const runtimeAddress = isAddress(runtimeAddressCandidate)
+        ? runtimeAddressCandidate
+        : null;
+
+      if (runtimeAddress) {
+        setRuntimeKeeperSessionKeyAddress(runtimeAddress);
+
+        if (keeperSessionKeyAddress && keeperSessionKeyAddress.toLowerCase() !== runtimeAddress.toLowerCase()) {
+          setKeeperAddressSyncWarning(
+            `web/.env NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS (${keeperSessionKeyAddress}) is out-of-sync with keeper runtime address (${runtimeAddress}). ` +
+            'Delegation flow now uses runtime keeper address from keeper /healthz. Please update web/.env to match.'
+          );
+        } else {
+          setKeeperAddressSyncWarning('');
+        }
+
+        return runtimeAddress;
+      }
+    } catch {
+      // Fallback to env-configured address below.
+    }
+
+    if (keeperSessionKeyAddress) {
+      setRuntimeKeeperSessionKeyAddress(keeperSessionKeyAddress);
+      setKeeperAddressSyncWarning('');
+      return keeperSessionKeyAddress;
+    }
+
+    throw new Error(configErrorMessage);
+  };
 
   const pushFrontendMetric = (field: keyof FrontendPerformanceMetrics, valueMs: number) => {
     setFrontendMetrics((previous) => {
@@ -251,10 +308,8 @@ export default function Home() {
     if (!isConnected || !address) {
       throw new Error('Please connect a wallet before updating delegation.');
     }
-    if (!keeperSessionKeyAddress) {
-      throw new Error(configErrorMessage);
-    }
-    if (address.toLowerCase() === keeperSessionKeyAddress.toLowerCase()) {
+    const resolvedKeeperSessionKeyAddress = await resolveKeeperSessionKeyAddress();
+    if (address.toLowerCase() === resolvedKeeperSessionKeyAddress.toLowerCase()) {
       throw new Error(
         'Invalid NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS: it matches the connected user wallet. ' +
         'Set this value to the off-chain keeper EOA address from keeper/.env (derived from KEEPER_PRIVATE_KEY).'
@@ -269,7 +324,7 @@ export default function Home() {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
-    return { connectedAddress: address, keeperSessionKeyAddress };
+    return { connectedAddress: address, keeperSessionKeyAddress: resolvedKeeperSessionKeyAddress };
   };
 
   const ensureSessionKeyDelegation = async (
@@ -961,6 +1016,12 @@ export default function Home() {
           {configErrorMessage ? (
             <p className="text-sm text-rose-300 bg-rose-950/30 border border-rose-800/60 rounded-lg px-3 py-2">
               {configErrorMessage}
+            </p>
+          ) : null}
+
+          {keeperAddressSyncWarning ? (
+            <p className="text-sm text-amber-200 bg-amber-950/30 border border-amber-800/60 rounded-lg px-3 py-2">
+              {keeperAddressSyncWarning}
             </p>
           ) : null}
 

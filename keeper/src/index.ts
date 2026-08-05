@@ -74,6 +74,7 @@ function setJsonResponse(res: http.ServerResponse, statusCode: number, payload: 
 
 function createHealthServer(port: number) {
   const startedAt = new Date().toISOString();
+  const keeperAddress = getKeeperAccount().address;
   const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url || '/', 'http://localhost');
     const pathName = requestUrl.pathname;
@@ -162,6 +163,12 @@ function createHealthServer(port: number) {
         status: 'ok',
         service: 'keeper',
         chainId: ARC_TESTNET_CONFIG.chainId,
+        keeperAddress,
+        contracts: {
+          sessionKeyRegistry: CONTRACT_ADDRESSES.sessionKeyRegistry,
+          sharedExecutorProxy: CONTRACT_ADDRESSES.sharedExecutorProxy,
+          recipeGuardrail: CONTRACT_ADDRESSES.recipeGuardrail,
+        },
         startedAt,
         timestamp: new Date().toISOString(),
       });

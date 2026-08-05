@@ -514,7 +514,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
     warnSpy.mockRestore();
   });
 
-  it('infers the spender from the DCA calldata without misclassifying numeric calldata words', async () => {
+  it('treats inferred calldata spender as advisory when shared proxy allowance is sufficient', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     dcaResolveRouteMock.mockResolvedValue({
@@ -527,11 +527,26 @@ describe('Cron Scheduler Recipe Triggering', () => {
       minSwapAssetOutBaseUnits: 4950000n,
     });
 
-    readContractMock
-      .mockResolvedValueOnce(5000000n) // USDC balance precheck
-      .mockResolvedValueOnce(1000000n) // allowance for inferred spender (c06e)
-      .mockResolvedValueOnce(5000000n) // allowance for shared executor proxy address
-      .mockResolvedValueOnce(5000000n); // allowance for target protocol address
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+
+        if (spender === '0xc06ebbefd94032b85424d51906e2a335efae264b') {
+          return 1000000n;
+        }
+
+        return 5000000n;
+      }
+
+      return true;
+    });
 
     findByStatusMock.mockResolvedValue([
       makeActiveRecipe({
@@ -544,19 +559,29 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     await pollAndTriggerActiveRecipes();
 
-    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
-    expect(queueAddMock).not.toHaveBeenCalled();
+    expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
 
-    const allowanceWarnings = warnSpy.mock.calls
+    const blockingWarnings = warnSpy.mock.calls
       .flatMap((call) => call)
       .filter(
         (value) =>
           typeof value === 'string' &&
           value.includes('DCA allowance is lower than configured spend')
+      );
+
+    expect(blockingWarnings).toHaveLength(0);
+
+    const advisoryWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA advisory spender allowance is below perExecution spend')
       ) as string[];
 
-    expect(allowanceWarnings).toHaveLength(1);
-    expect(allowanceWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
+    expect(advisoryWarnings).toHaveLength(1);
+    expect(advisoryWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
 
     warnSpy.mockRestore();
   });
@@ -620,7 +645,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
     logSpy.mockRestore();
   });
 
-  it('infers DCA spender from callData selector when route response omits spenderAddress', async () => {
+  it('continues enqueue when route omits spenderAddress and only inferred spender is below threshold', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     dcaResolveRouteMock.mockResolvedValue({
@@ -633,10 +658,26 @@ describe('Cron Scheduler Recipe Triggering', () => {
       minSwapAssetOutBaseUnits: 4950000n,
     });
 
-    readContractMock
-      .mockResolvedValueOnce(5000000n) // USDC balance precheck
-      .mockResolvedValueOnce(1000000n) // USDC allowance precheck (route spender)
-      .mockResolvedValueOnce(5000000n); // USDC allowance precheck (shared executor)
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+
+        if (spender === '0xc06ebbefd94032b85424d51906e2a335efae264b') {
+          return 1000000n;
+        }
+
+        return 5000000n;
+      }
+
+      return true;
+    });
 
     findByStatusMock.mockResolvedValue([
       makeActiveRecipe({
@@ -649,19 +690,113 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     await pollAndTriggerActiveRecipes();
 
-    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
-    expect(queueAddMock).not.toHaveBeenCalled();
+    expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
 
-    const allowanceWarnings = warnSpy.mock.calls
+    const blockingWarnings = warnSpy.mock.calls
       .flatMap((call) => call)
       .filter(
         (value) =>
           typeof value === 'string' &&
           value.includes('DCA allowance is lower than configured spend')
+      );
+
+    expect(blockingWarnings).toHaveLength(0);
+
+    const advisoryWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA advisory spender allowance is below perExecution spend')
       ) as string[];
 
-    expect(allowanceWarnings).toHaveLength(1);
-    expect(allowanceWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
+    expect(advisoryWarnings).toHaveLength(1);
+    expect(advisoryWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
+
+    warnSpy.mockRestore();
+  });
+
+  it('does not block enqueue when only advisory spender allowance is insufficient', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+      callData:
+        '0x7ebc46f0' +
+        '0000000000000000000000003600000000000000000000000000000000000000' +
+        '000000000000000000000000c06ebbefd94032b85424d51906e2a335efae264b' +
+        '00000000000000000000000000000000000000000000000000000000000003e8',
+      minSwapAssetOutBaseUnits: 4950000n,
+    });
+
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+
+        // Runtime spender (decoded from calldata) remains sufficient.
+        if (spender === '0xc06ebbefd94032b85424d51906e2a335efae264b') {
+          return 5000000n;
+        }
+
+        // Simulate an advisory candidate spender with zero allowance.
+        if (spender === '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9') {
+          return 0n;
+        }
+
+        return 5000000n;
+      }
+
+      return true;
+    });
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-advisory-spender-low-allowance',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: {
+          totalBudgetUsdc: '100',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
+          maxSlippageBps: 100,
+          targetAssetSymbol: 'EURC',
+        },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+
+    const blockingWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      );
+
+    expect(blockingWarnings).toHaveLength(0);
+
+    const advisoryWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA advisory spender allowance is below perExecution spend')
+      ) as string[];
+
+    expect(advisoryWarnings).toHaveLength(1);
+    expect(advisoryWarnings[0]).toContain('spender=0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9');
 
     warnSpy.mockRestore();
   });
