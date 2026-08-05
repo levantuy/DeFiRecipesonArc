@@ -9,6 +9,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "db:migrate": "node scripts/run-migrations.js",
     "smoke:endpoints": "node scripts/smoke-endpoints.js",
+    "verify:dca-tx": "node scripts/verify-dca-tx.js",
+    "probe:dca-routes": "node scripts/probe-dca-routes.js",
     "cleanup:test-data": "node scripts/cleanup-test-data.js",
     "pipeline:smoke-cleanup": "node scripts/smoke-and-cleanup.js",
     "test": "vitest run",

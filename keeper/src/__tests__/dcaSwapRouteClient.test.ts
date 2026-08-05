@@ -126,6 +126,82 @@ describe('dcaSwapRouteClient', () => {
     });
   });
 
+  it('prefers swap selector instruction when response includes multiple executable instructions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          transaction: {
+            executionParams: {
+              instructions: [
+                {
+                  target: '0x6666666666666666666666666666666666666666',
+                  data: '0x095ea7b300000000000000000000000066666666666666666666666666666666666666660000000000000000000000000000000000000000000000000000000000000001',
+                },
+                {
+                  target: '0x7777777777777777777777777777777777777777',
+                  data: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000001',
+                  minTokenOut: '46000000',
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createDcaSwapRouteClientFromRuntime } = await import('../integrations/circle/dcaSwapRouteClient');
+    const client = createDcaSwapRouteClientFromRuntime();
+
+    const plan = await client.resolveRoute(request);
+
+    expect(plan).toEqual({
+      targetProtocolAddress: '0x7777777777777777777777777777777777777777',
+      callData: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000001',
+      minSwapAssetOutBaseUnits: 46000000n,
+    });
+  });
+
+  it('selects swap instruction and minTokenOut from multi-step App Kit response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          transaction: {
+            executionParams: {
+              instructions: [
+                {
+                  target: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  data: '0x095ea7b3000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000000000000000000000000000000001',
+                },
+                {
+                  target: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                  data: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000002',
+                  minTokenOut: '45550000',
+                },
+              ],
+            },
+          },
+          stopLimit: '10000000',
+          minAmountOut: '9999999',
+        }),
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createDcaSwapRouteClientFromRuntime } = await import('../integrations/circle/dcaSwapRouteClient');
+    const client = createDcaSwapRouteClientFromRuntime();
+
+    const plan = await client.resolveRoute(request);
+
+    expect(plan).toEqual({
+      targetProtocolAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      callData: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000002',
+      minSwapAssetOutBaseUnits: 45550000n,
+    });
+  });
+
   it('throws a clear error when stablecoin service request fails', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

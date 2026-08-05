@@ -18,6 +18,14 @@ export interface DcaSwapRouteClient {
   resolveRoute(request: DcaSwapRouteRequest): Promise<DcaSwapExecutionPlan>;
 }
 
+const DCA_SWAP_SELECTORS = new Set(['0x7ebc46f0', '0x38ed1739']);
+
+interface TransactionCandidate {
+  to: `0x${string}`;
+  data: `0x${string}`;
+  source?: Record<string, unknown>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -48,19 +56,37 @@ function normalizeHexData(value: unknown): `0x${string}` | null {
   return normalized as `0x${string}`;
 }
 
-function tryExtractTransaction(record: Record<string, unknown>): { to: `0x${string}`; data: `0x${string}` } | null {
+function tryExtractTransaction(record: Record<string, unknown>): TransactionCandidate | null {
   const to = normalizeHexAddress(record.to ?? record.target ?? record.contractAddress);
   const data = normalizeHexData(record.data ?? record.callData ?? record.input);
 
   if (to && data) {
-    return { to, data };
+    return { to, data, source: record };
   }
 
   return null;
 }
 
-function extractTransactionFromResponse(payload: unknown): { to: `0x${string}`; data: `0x${string}` } | null {
+function getSelector(callData: `0x${string}`): `0x${string}` {
+  return (callData.length >= 10 ? callData.slice(0, 10) : '0x').toLowerCase() as `0x${string}`;
+}
+
+function selectPreferredTransaction(candidates: TransactionCandidate[]): TransactionCandidate | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const selectorMatch = candidates.find((candidate) => DCA_SWAP_SELECTORS.has(getSelector(candidate.data)));
+  if (selectorMatch) {
+    return selectorMatch;
+  }
+
+  return candidates[0] ?? null;
+}
+
+function extractTransactionFromResponse(payload: unknown): TransactionCandidate | null {
   const queue: unknown[] = [payload];
+  const candidates: TransactionCandidate[] = [];
   let scanned = 0;
 
   while (queue.length > 0 && scanned < 100) {
@@ -73,7 +99,7 @@ function extractTransactionFromResponse(payload: unknown): { to: `0x${string}`; 
 
     const direct = tryExtractTransaction(current);
     if (direct) {
-      return direct;
+      candidates.push(direct);
     }
 
     const transactions = current.transactions;
@@ -82,7 +108,22 @@ function extractTransactionFromResponse(payload: unknown): { to: `0x${string}`; 
         if (isRecord(entry)) {
           const candidate = tryExtractTransaction(entry);
           if (candidate) {
-            return candidate;
+            candidates.push(candidate);
+          }
+        }
+      }
+    }
+
+    const transaction = current.transaction;
+    if (isRecord(transaction)) {
+      const executionParams = transaction.executionParams;
+      if (isRecord(executionParams) && Array.isArray(executionParams.instructions)) {
+        for (const instruction of executionParams.instructions) {
+          if (isRecord(instruction)) {
+            const candidate = tryExtractTransaction(instruction);
+            if (candidate) {
+              candidates.push(candidate);
+            }
           }
         }
       }
@@ -95,7 +136,7 @@ function extractTransactionFromResponse(payload: unknown): { to: `0x${string}`; 
     }
   }
 
-  return null;
+  return selectPreferredTransaction(candidates);
 }
 
 function parseBigIntFromUnknown(value: unknown): bigint | null {
@@ -117,7 +158,24 @@ function parseBigIntFromUnknown(value: unknown): bigint | null {
   return null;
 }
 
-function extractMinOutFromResponse(payload: unknown): bigint | null {
+function extractMinOutFromResponse(payload: unknown, selectedTransaction?: TransactionCandidate): bigint | null {
+  if (selectedTransaction?.source) {
+    const selectedInstructionCandidates: unknown[] = [
+      selectedTransaction.source.minTokenOut,
+      selectedTransaction.source.minAmountOut,
+      selectedTransaction.source.amountOutMin,
+      selectedTransaction.source.minimumAmountOut,
+      selectedTransaction.source.stopLimit,
+    ];
+
+    for (const candidate of selectedInstructionCandidates) {
+      const parsed = parseBigIntFromUnknown(candidate);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
   if (!isRecord(payload)) {
     return null;
   }
@@ -270,7 +328,7 @@ class AppKitDcaSwapRouteClient implements DcaSwapRouteClient {
     }
 
     const minSwapAssetOutBaseUnits =
-      extractMinOutFromResponse(response) ??
+      extractMinOutFromResponse(response, transaction) ??
       fallbackMinOutFromInput(request.amountInBaseUnits, request.maxSlippageBps);
     const spenderAddress = extractSpenderAddressFromResponse(response) ?? undefined;
 
