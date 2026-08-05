@@ -455,6 +455,63 @@ describe('Cron Scheduler Recipe Triggering', () => {
     warnSpy.mockRestore();
   });
 
+  it('logs a balance-specific warning once when DCA simulation fails due to insufficient balance', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+      callData: '0x12345678',
+      minSwapAssetOutBaseUnits: 49500000n,
+      spenderAddress: '0xc06ebbefd94032b85424d51906e2a335efae264b',
+    });
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-balance-low',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL', maxSlippageBps: 100, targetAssetSymbol: 'EURC' },
+      }),
+    ]);
+
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        return 5000000n;
+      }
+
+      return true;
+    });
+
+    simulateRecipeStepMock.mockResolvedValue({
+      success: false,
+      errorMessage: 'execution reverted: ERC20: transfer amount exceeds balance',
+    });
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const balanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA simulation failed because an ERC20 balance was insufficient')
+      ) as string[];
+
+    expect(balanceWarnings).toHaveLength(1);
+    expect(balanceWarnings[0]).toContain('targetProtocol=0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9');
+    expect(balanceWarnings[0]).toContain('selector=0x12345678');
+
+    warnSpy.mockRestore();
+  });
+
   it('skips simulation when DCA allowance precheck is below required spend', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

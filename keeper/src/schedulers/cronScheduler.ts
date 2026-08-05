@@ -54,6 +54,7 @@ const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
 const appKitBypassHintsLogged = new Set<string>();
 const executorNotApprovedHintsLogged = new Set<string>();
 const allowanceExceededHintsLogged = new Set<string>();
+const balanceExceededHintsLogged = new Set<string>();
 const allowancePrecheckHintsLogged = new Set<string>();
 const unsupportedDcaModeHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
@@ -327,6 +328,11 @@ function isExecutorNotApprovedError(errorMessage: string): boolean {
 function isAllowanceExceededError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return normalized.includes('transfer amount exceeds allowance');
+}
+
+function isBalanceExceededError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('transfer amount exceeds balance');
 }
 
 function isArcAppKitNoRouteError(errorMessage: string): boolean {
@@ -1266,6 +1272,22 @@ export async function pollAndTriggerActiveRecipes() {
             }
           }
 
+          if (recipe.recipeType === RecipeType.RECURRING_DCA && isBalanceExceededError(simulationError)) {
+            const selectorKey = `${recipe.id}:${targetProtocol.toLowerCase()}:${selectorHex.toLowerCase()}`;
+            if (!balanceExceededHintsLogged.has(selectorKey)) {
+              console.warn(
+                `[Cron Scheduler Action Required] DCA simulation failed because an ERC20 balance was insufficient ${context}. ` +
+                `targetProtocol=${targetProtocol} selector=${selectorHex} runtimeSpender=${resolveDcaAllowanceSpenderAddress(
+                  callData,
+                  targetProtocol as `0x${string}`,
+                  routeSpenderAddress
+                )}. ` +
+                `Review the App Kit route, targetAssetSymbol, and maxSlippageBps for a route with sufficient liquidity, then retry once balances recover.`
+              );
+              balanceExceededHintsLogged.add(selectorKey);
+            }
+          }
+
           // Rewards can disappear between the pre-check and the simulation.
           if (normalizeErrorMessage(simulationError).includes('no rewards')) {
             console.log(
@@ -1391,6 +1413,7 @@ export function __resetCronSchedulerStateForTests() {
   protocolNotAllowedHintsLogged.clear();
   executorNotApprovedHintsLogged.clear();
   allowanceExceededHintsLogged.clear();
+  balanceExceededHintsLogged.clear();
   allowancePrecheckHintsLogged.clear();
   unsupportedDcaModeHintsLogged.clear();
   claimableRewardsCache.clear();
