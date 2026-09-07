@@ -82,7 +82,6 @@ export const executionLogsRepository = {
     executedAt?: Date | null;
     gasUsedUsdc?: string | null;
   }): Promise<void> {
-    const now = new Date();
     await query({
       name: 'execution-log-update-status',
       text: `

@@ -2,6 +2,7 @@
 
 ## Summary
 End-to-end optimization was implemented for keeper throughput, RPC resilience, async confirmation architecture, and frontend perceived transaction performance.
+This document is the single source of truth for both baseline and optimized measurements.
 
 ## Measurement Source
 - Keeper benchmark command: `npm run benchmark:perf`

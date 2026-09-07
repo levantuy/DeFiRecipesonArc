@@ -2,7 +2,7 @@
 
 **Version:** 1.0 (Official Technical Architecture Specification)  
 **Status:** Approved Specification  
-**Base Documents:** [Project Vision v2.1](file:///d:/source-code/arc/DeFiRecipesonArc/docs/project-vision.md) | [Feature Specifications v2.0](file:///d:/source-code/arc/DeFiRecipesonArc/docs/features-spec.md) | [Architecture Proposal v1.0](file:///d:/source-code/arc/DeFiRecipesonArc/docs/architecture-proposal.md)  
+**Base Documents:** [Project Vision v2.1](./project-vision.md) | [Feature Specifications v2.0](./features-spec.md) | [Architecture Proposal v1.0](./architecture-proposal.md)
 **Target Blockchain:** Arc Network (Chain ID: `5042002`, Native USDC Gas)  
 **Testnet Token Scope:** `USDC`, `EURC`, `cirBTC`  
 

@@ -32,7 +32,7 @@ graph LR
 
 ### 2.2. Trách nhiệm của Người Review (Reviewer)
 - Kiểm tra tính đúng đắn về mặt logic và an ninh tài sản (Smart Contract Security).
-- Kiểm tra việc tuân thủ các quy chuẩn [Coding Style](file:///d:/source-code/arc/DeFiRecipesonArc/docs/coding-style.md) và [Coding Rules](file:///d:/source-code/arc/DeFiRecipesonArc/docs/coding-rules.md).
+- Kiểm tra việc tuân thủ các quy chuẩn [Coding Style](./coding-style.md) và [Coding Rules](./coding-rules.md).
 - Thảo luận mang tính xây dựng, giải thích rõ lý do khi yêu cầu thay đổi (Request Changes).
 
 ---

@@ -1,6 +1,6 @@
 import { createPublicClient, http, fallback, Address, Hex, type PublicClient } from 'viem';
 import { arcTestnet } from 'viem/chains';
-import { ARC_TESTNET_CONFIG, CONTRACT_ADDRESSES, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
+import { CONTRACT_ADDRESSES, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { RUNTIME_CONFIG } from '../config/runtime';
 import { incrementCounter } from '../observability/metrics';
 

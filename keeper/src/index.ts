@@ -10,7 +10,6 @@ import {
   recipeWorker,
   txConfirmationQueue,
   txConfirmationWorker,
-  executeRecipeStepDirectly,
 } from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
 import {

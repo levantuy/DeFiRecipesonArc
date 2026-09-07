@@ -2,7 +2,7 @@
 
 **Version:** 2.0 (Detailed Granular Specification)  
 **Status:** Approved Specification  
-**Base Document:** [Project Vision v2.1](file:///d:/source-code/arc/DeFiRecipesonArc/docs/project-vision.md)  
+**Base Document:** [Project Vision v2.1](./project-vision.md)
 **Network:** Arc Testnet only (Chain ID `5042002`, Native USDC Gas, Sub-second Finality)
 **Target Release:** MVP Phase 1 & Roadmap to Phase 2  
 
