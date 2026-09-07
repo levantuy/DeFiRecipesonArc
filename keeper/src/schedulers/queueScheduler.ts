@@ -15,11 +15,13 @@ import {
 import { executionLogsRepository } from '../db/repositories/executionLogsRepository';
 import { recipesRepository } from '../db/repositories/recipesRepository';
 import { applyDcaExecution, parseDcaConfigStateStrict, remainingBudgetBaseUnits, toPersistedDcaParameters } from '../domain/dcaConfig';
+import { ARC_CIRBTC_ADDRESS, ARC_EURC_ADDRESS, ARC_USDC_ADDRESS } from '../config/dcaRouting';
 
 const REDIS_URL = RUNTIME_CONFIG.redisUrl;
 const REDIS_QUEUE_ENABLED = RUNTIME_CONFIG.keeperUseRedisQueue;
 const TX_RETRY_BASE_DELAY_MS = 1500;
 const TX_RETRY_MAX_DELAY_MS = 12000;
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 let lastRedisErrorLogTime = 0;
 
@@ -150,6 +152,7 @@ export interface RecipeExecutionJobData {
 
 export interface TxConfirmationJobData {
   recipeId: string;
+  userAddress: `0x${string}`;
   txHash: `0x${string}`;
   executionLogId: string | null;
   queueEnqueuedAtMs?: number;
@@ -159,7 +162,140 @@ export interface TxConfirmationJobData {
   dcaExecutionAmountBaseUnits?: string;
 }
 
-async function persistDcaExecutionProgress(data: TxConfirmationJobData): Promise<void> {
+function normalizeAddress(value: string): `0x${string}` {
+  return value.toLowerCase() as `0x${string}`;
+}
+
+function topicToAddress(topic: string | undefined): `0x${string}` | null {
+  if (!topic || !topic.startsWith('0x') || topic.length !== 66) {
+    return null;
+  }
+
+  const suffix = topic.slice(-40);
+  if (!/^[a-fA-F0-9]{40}$/.test(suffix)) {
+    return null;
+  }
+
+  return normalizeAddress(`0x${suffix}`);
+}
+
+function parseLogUint256(data: string): bigint {
+  if (!data || !data.startsWith('0x')) {
+    return 0n;
+  }
+
+  try {
+    return BigInt(data);
+  } catch {
+    return 0n;
+  }
+}
+
+function sumErc20TransferAmount(
+  receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>,
+  tokenAddress: `0x${string}`,
+  predicate: (fromAddress: `0x${string}`, toAddress: `0x${string}`) => boolean
+): bigint {
+  let total = 0n;
+  const normalizedTokenAddress = normalizeAddress(tokenAddress);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+
+  for (const log of logs) {
+    if (!log.address || normalizeAddress(log.address) !== normalizedTokenAddress) {
+      continue;
+    }
+
+    const topic0 = log.topics[0]?.toLowerCase();
+    if (topic0 !== ERC20_TRANSFER_TOPIC) {
+      continue;
+    }
+
+    const fromAddress = topicToAddress(log.topics[1]);
+    const toAddress = topicToAddress(log.topics[2]);
+    if (!fromAddress || !toAddress) {
+      continue;
+    }
+
+    if (!predicate(fromAddress, toAddress)) {
+      continue;
+    }
+
+    total += parseLogUint256(log.data);
+  }
+
+  return total;
+}
+
+function resolveExpectedDcaOutputTokenAddress(targetAssetSymbolRaw: unknown): `0x${string}` | null {
+  if (typeof targetAssetSymbolRaw !== 'string') {
+    return null;
+  }
+
+  const normalized = targetAssetSymbolRaw.trim().toUpperCase();
+  if (normalized === 'EURC') {
+    return ARC_EURC_ADDRESS;
+  }
+
+  if (normalized === 'CIRBTC') {
+    return ARC_CIRBTC_ADDRESS;
+  }
+
+  return null;
+}
+
+async function validateDcaReceiptAndResolveActualUsdcSpend(
+  data: TxConfirmationJobData,
+  receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>
+): Promise<bigint | null> {
+  if (!data.dcaExecutionAmountBaseUnits) {
+    return null;
+  }
+
+  const recipe = await recipesRepository.findById(data.recipeId);
+  if (!recipe || recipe.recipeType !== 'RECURRING_DCA') {
+    return null;
+  }
+
+  const recipeParams = recipe.parametersJson as Record<string, unknown>;
+  const targetAssetSymbol = typeof recipeParams.targetAssetSymbol === 'string'
+    ? recipeParams.targetAssetSymbol
+    : 'unknown';
+
+  const expectedOutputTokenAddress = resolveExpectedDcaOutputTokenAddress(recipeParams.targetAssetSymbol);
+
+  if (expectedOutputTokenAddress) {
+    const outputReceivedByUser = sumErc20TransferAmount(
+      receipt,
+      expectedOutputTokenAddress,
+      (_, toAddress) => toAddress === normalizeAddress(data.userAddress)
+    );
+
+    if (outputReceivedByUser <= 0n) {
+      throw new Error(
+        `DCA no-op detected: tx=${data.txHash} did not transfer ${targetAssetSymbol} to user=${data.userAddress}.`
+      );
+    }
+  }
+
+  const actualUsdcSpentByUser = sumErc20TransferAmount(
+    receipt,
+    ARC_USDC_ADDRESS,
+    (fromAddress) => fromAddress === normalizeAddress(data.userAddress)
+  );
+
+  if (data.dcaMode === 'PULL' && actualUsdcSpentByUser <= 0n) {
+    throw new Error(
+      `DCA no-op detected: tx=${data.txHash} has no user USDC spend in PULL mode for user=${data.userAddress}.`
+    );
+  }
+
+  return actualUsdcSpentByUser;
+}
+
+async function persistDcaExecutionProgress(
+  data: TxConfirmationJobData,
+  actualUsdcSpentBaseUnits: bigint | null
+): Promise<void> {
   if (!data.dcaExecutionAmountBaseUnits) {
     return;
   }
@@ -169,8 +305,27 @@ async function persistDcaExecutionProgress(data: TxConfirmationJobData): Promise
     return;
   }
 
+  const actualSpent = actualUsdcSpentBaseUnits ?? 0n;
+  if (actualSpent <= 0n) {
+    console.warn(
+      `[DCA_EVENT] DCA confirmed with zero user USDC spend. ` +
+      `Skipping spentAmountBaseUnits update for recipeId=${recipe.id} tx=${data.txHash}.`
+    );
+    return;
+  }
+
   const currentState = parseDcaConfigStateStrict(recipe.parametersJson);
-  const nextState = applyDcaExecution(currentState, BigInt(data.dcaExecutionAmountBaseUnits));
+  const remainingBefore = remainingBudgetBaseUnits(currentState);
+  const boundedActualSpent = actualSpent > remainingBefore ? remainingBefore : actualSpent;
+
+  if (boundedActualSpent !== actualSpent) {
+    console.warn(
+      `[DCA_EVENT] Actual USDC spend (${actualSpent.toString()}) exceeds remaining budget (${remainingBefore.toString()}). ` +
+      `Clamping to remaining budget for recipeId=${recipe.id}.`
+    );
+  }
+
+  const nextState = applyDcaExecution(currentState, boundedActualSpent);
   const nextParameters = toPersistedDcaParameters(
     recipe.parametersJson as Record<string, unknown>,
     nextState
@@ -180,7 +335,7 @@ async function persistDcaExecutionProgress(data: TxConfirmationJobData): Promise
 
   const remaining = remainingBudgetBaseUnits(nextState);
   console.info(
-    `[DCA_EVENT] DcaExecuted(user=${recipe.userAddress}, executionAmount=${data.dcaExecutionAmountBaseUnits}, ` +
+    `[DCA_EVENT] DcaExecuted(user=${recipe.userAddress}, executionAmount=${boundedActualSpent.toString()}, ` +
     `totalSpent=${nextState.spentAmountBaseUnits.toString()}, remainingBudget=${remaining.toString()})`
   );
 
@@ -245,6 +400,8 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
     throw new Error(`Transaction failed on-chain: ${data.txHash}`);
   }
 
+  const actualDcaUsdcSpentBaseUnits = await validateDcaReceiptAndResolveActualUsdcSpend(data, receipt);
+
   if (data.executionLogId) {
     await executionLogsRepository
       .updateLogStatus({
@@ -257,7 +414,7 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
       });
   }
 
-  await persistDcaExecutionProgress(data).catch((error: unknown) => {
+  await persistDcaExecutionProgress(data, actualDcaUsdcSpentBaseUnits).catch((error: unknown) => {
     const message = getErrorMessage(error);
     console.warn(`[Keeper Engine] Failed to persist DCA progress for recipeId=${data.recipeId}: ${message}`);
   });
@@ -433,6 +590,7 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
 
   const confirmationPayload: TxConfirmationJobData = {
     recipeId: data.recipeId,
+    userAddress: data.userAddress,
     txHash: hash,
     executionLogId,
     queueEnqueuedAtMs: data.queueEnqueuedAtMs,

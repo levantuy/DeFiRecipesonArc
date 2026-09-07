@@ -225,6 +225,7 @@ describe('Queue Scheduler & Job Execution', () => {
         executedCount: 0,
         mode: 'PULL',
         status: 'ACTIVE',
+        targetAssetSymbol: 'EURC',
       },
     });
 
@@ -232,6 +233,26 @@ describe('Queue Scheduler & Job Execution', () => {
       blockNumber: 125n,
       status: 'success',
       gasUsed: 21000n,
+      logs: [
+        {
+          address: '0x3600000000000000000000000000000000000000',
+          topics: [
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+            '0x0000000000000000000000001111111111111111111111111111111111111111',
+            '0x0000000000000000000000000f41e2b1f31d905d5e0aa6e1359ae43c6b78c867',
+          ],
+          data: '0x00000000000000000000000000000000000000000000000000000000004c4b40',
+        },
+        {
+          address: '0x89b50855aa3be2f677cd6303cec089b5f319d72a',
+          topics: [
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+            '0x0000000000000000000000000f41e2b1f31d905d5e0aa6e1359ae43c6b78c867',
+            '0x0000000000000000000000001111111111111111111111111111111111111111',
+          ],
+          data: '0x00000000000000000000000000000000000000000000000000000000004c4b40',
+        },
+      ],
     } as Awaited<ReturnType<typeof simulationEngine.publicClient.waitForTransactionReceipt>>);
 
     await executeRecipeStepDirectly({
