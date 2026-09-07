@@ -247,6 +247,57 @@ export const recipesRepository = {
     return rows.map(mapRecipeRow);
   },
 
+  async listLatestByUserAndType(input?: {
+    userAddress?: string;
+    limit?: number;
+  }): Promise<ActiveRecipeRecord[]> {
+    const limit = Math.max(1, Math.min(200, input?.limit ?? 100));
+    const userAddress = input?.userAddress ?? null;
+
+    const rows = await query<ActiveRecipeRow>({
+      name: 'recipe-list-latest-by-user-type',
+      text: `
+        WITH ranked AS (
+          SELECT
+            id,
+            "userAddress",
+            "recipeType",
+            status,
+            "targetProtocol",
+            "swapProvider",
+            "parametersJson",
+            "lastExecutedAt",
+            "createdAt",
+            "updatedAt",
+            ROW_NUMBER() OVER (
+              PARTITION BY "userAddress", "recipeType"
+              ORDER BY "updatedAt" DESC
+            ) AS row_num
+          FROM "ActiveRecipe"
+          WHERE ($1::text IS NULL OR "userAddress" = $1)
+        )
+        SELECT
+          id,
+          "userAddress",
+          "recipeType",
+          status,
+          "targetProtocol",
+          "swapProvider",
+          "parametersJson",
+          "lastExecutedAt",
+          "createdAt",
+          "updatedAt"
+        FROM ranked
+        WHERE row_num = 1
+        ORDER BY "updatedAt" DESC
+        LIMIT $2
+      `,
+      values: [userAddress, limit],
+    });
+
+    return rows.map(mapRecipeRow);
+  },
+
   async findById(recipeId: string): Promise<ActiveRecipeRecord | null> {
     const rows = await query<ActiveRecipeRow>({
       name: 'recipe-find-by-id',

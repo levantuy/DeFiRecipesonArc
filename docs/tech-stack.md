@@ -132,7 +132,7 @@ function executeStep(
 
 * **Cấu trúc Dịch vụ (Modular Worker Architecture):**
   * **Scheduler Service:** Chạy các tác vụ lặp định kỳ (ví dụ: Auto-Compound hàng tuần, DCA hàng ngày).
-  * **Monitoring Service:** Lắng nghe sự kiện on-chain, theo dõi biến động APY giữa Arc Lending và Treasury Vaults, theo dõi Collateral Ratio của người dùng.
+  * **Monitoring Service:** Lắng nghe sự kiện on-chain, theo dõi tình trạng route swap và trạng thái thực thi recipe của người dùng.
   * **Static Simulation Engine:** Chạy hàm `eth_call` thông qua Viem để giả lập kết quả thực thi giao dịch off-chain trước khi broadcast lên mạng lưới Arc. Nếu giả lập thất bại hoặc bị revert, giao dịch sẽ không được gửi để tránh tốn chi phí và gây nghẽn mạng.
   * **Relayer & Retry Engine:** Xử lý việc ký giao dịch bằng Session Key, tự động tăng nonce/gas fee và retry theo chiến thuật Exponential Backoff khi mạng bận.
 * **Mô hình Dữ liệu & Persistence (Prisma + PostgreSQL):**
@@ -156,7 +156,7 @@ Giao diện Web cung cấp trải nghiệm quản lý tự động hóa mượt 
     * Cảnh báo rủi ro thị trường liên quan.
 * **Bảng điều khiển Portfolio & Audit Logs:**
   * Hiển thị số dư USDC real-time (sử dụng 6 decimals ERC-20 view).
-  * Biểu đồ theo dõi lợi suất tích lũy từ các Recipe Auto-Compound & Rebalancer.
+  * Biểu đồ theo dõi lợi suất tích lũy từ luồng Auto-Compounder và hiệu suất tích lũy tài sản của luồng Recurring DCA.
   * Bảng Audit Log chi tiết lịch sử từng lần Keeper thực thi giao dịch tự động.
 
 ---
@@ -227,7 +227,7 @@ DeFiRecipesonArc/
 │   └── script/              # Deploy & Configuration scripts
 ├── keeper/                  # Off-Chain Keeper Engine (Node.js/TypeScript)
 │   ├── src/
-│   │   ├── schedulers/      # Cron & APY monitoring jobs
+│   │   ├── schedulers/      # Cron & execution scheduling jobs
 │   │   ├── simulation/      # Static eth_call simulation engine
 │   │   ├── relayer/         # Tx submitter & retry logic
 │   │   └── db/              # Prisma schema & database client

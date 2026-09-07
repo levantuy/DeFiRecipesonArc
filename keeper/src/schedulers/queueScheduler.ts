@@ -17,26 +17,54 @@ import { recipesRepository } from '../db/repositories/recipesRepository';
 import { applyDcaExecution, parseDcaConfigStateStrict, remainingBudgetBaseUnits, toPersistedDcaParameters } from '../domain/dcaConfig';
 
 const REDIS_URL = RUNTIME_CONFIG.redisUrl;
+const REDIS_QUEUE_ENABLED = RUNTIME_CONFIG.keeperUseRedisQueue;
 const TX_RETRY_BASE_DELAY_MS = 1500;
 const TX_RETRY_MAX_DELAY_MS = 12000;
 
 let lastRedisErrorLogTime = 0;
 
-export const redisConnection = new Redis(REDIS_URL, {
-  maxRetriesPerRequest: null,
-  lazyConnect: true,
-  retryStrategy(times) {
-    return Math.min(times * 1000, RUNTIME_CONFIG.redisRetryMaxDelayMs);
-  },
-});
+export const redisConnection = REDIS_QUEUE_ENABLED
+  ? new Redis(REDIS_URL, {
+    maxRetriesPerRequest: null,
+    lazyConnect: true,
+    retryStrategy(times) {
+      return Math.min(times * 1000, RUNTIME_CONFIG.redisRetryMaxDelayMs);
+    },
+  })
+  : null;
 
-redisConnection.on('error', (err) => {
-  const now = Date.now();
-  if (now - lastRedisErrorLogTime > 30000) {
-    console.warn(`[Redis Notice] Connection warning (${err.message}). Retrying...`);
-    lastRedisErrorLogTime = now;
-  }
-});
+if (redisConnection) {
+  redisConnection.on('error', (err) => {
+    const now = Date.now();
+    if (now - lastRedisErrorLogTime > 30000) {
+      console.warn(`[Redis Notice] Connection warning (${err.message}). Retrying...`);
+      lastRedisErrorLogTime = now;
+    }
+  });
+}
+
+type QueueLike<T> = {
+  add: Queue<T>['add'];
+  close: Queue<T>['close'];
+};
+
+const noopQueue = {
+  async add() {
+    throw new Error('Redis queue is disabled (KEEPER_USE_REDIS_QUEUE=false).');
+  },
+  async close() {
+    return;
+  },
+};
+
+const noopWorker = {
+  async close() {
+    return;
+  },
+  on() {
+    return;
+  },
+};
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -169,21 +197,25 @@ function getRecipeLogContext(data: RecipeExecutionJobData): string {
   return `[recipeId=${data.recipeId} userAddress=${data.userAddress} recipeType=${data.recipeType || 'UNKNOWN'}]`;
 }
 
-export const recipeQueue = new Queue<RecipeExecutionJobData>('recipe-execution-queue', {
-  connection: redisConnection,
-  defaultJobOptions: {
-    removeOnComplete: 200,
-    removeOnFail: 500,
-  },
-});
+export const recipeQueue: QueueLike<RecipeExecutionJobData> = redisConnection
+  ? new Queue<RecipeExecutionJobData>('recipe-execution-queue', {
+    connection: redisConnection,
+    defaultJobOptions: {
+      removeOnComplete: 200,
+      removeOnFail: 500,
+    },
+  })
+  : noopQueue as QueueLike<RecipeExecutionJobData>;
 
-export const txConfirmationQueue = new Queue<TxConfirmationJobData>('tx-confirmation-queue', {
-  connection: redisConnection,
-  defaultJobOptions: {
-    removeOnComplete: 500,
-    removeOnFail: 1000,
-  },
-});
+export const txConfirmationQueue: QueueLike<TxConfirmationJobData> = redisConnection
+  ? new Queue<TxConfirmationJobData>('tx-confirmation-queue', {
+    connection: redisConnection,
+    defaultJobOptions: {
+      removeOnComplete: 500,
+      removeOnFail: 1000,
+    },
+  })
+  : noopQueue as QueueLike<TxConfirmationJobData>;
 
 async function markExecutionReverted(executionLogId: string | null, message: string) {
   if (!executionLogId) {
@@ -243,6 +275,10 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
 }
 
 async function enqueueConfirmation(data: TxConfirmationJobData) {
+  if (!REDIS_QUEUE_ENABLED) {
+    throw new Error('Cannot enqueue tx confirmation because Redis queue is disabled.');
+  }
+
   const jobId = `confirm-${data.recipeId}-${data.txHash}`;
   await txConfirmationQueue.add(jobId, data, {
     jobId,
@@ -417,6 +453,20 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     };
   }
 
+  if (!REDIS_QUEUE_ENABLED) {
+    console.warn(
+      `[Keeper Engine Notice] Redis queue disabled. Falling back to sync confirmation ${context}`
+    );
+    await waitForReceiptAndPersist(confirmationPayload);
+
+    return {
+      status: 'SIMULATED_AND_EXECUTED',
+      txHash: hash,
+      gasUsedUsdc: estimatedGasUsdc,
+      confirmationMode: 'sync',
+    };
+  }
+
   await enqueueConfirmation(confirmationPayload);
 
   if (!hasPersistedRecipe) {
@@ -436,55 +486,76 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
   };
 }
 
-export const recipeWorker = new Worker<RecipeExecutionJobData>(
-  'recipe-execution-queue',
-  async (job: Job<RecipeExecutionJobData>) => {
-    console.log(`[BullMQ Worker] Processing job ${job.id} ${getRecipeLogContext(job.data)}`);
-    return await executeRecipeStepDirectly(job.data);
-  },
-  {
-    connection: redisConnection,
-    concurrency: 8,
+export async function dispatchRecipeExecutionJob(
+  jobId: string,
+  jobData: RecipeExecutionJobData
+): Promise<'queued' | 'direct'> {
+  if (REDIS_QUEUE_ENABLED) {
+    await recipeQueue.add(jobId, jobData, { jobId });
+    return 'queued';
   }
-);
 
-export const txConfirmationWorker = new Worker<TxConfirmationJobData>(
-  'tx-confirmation-queue',
-  async (job: Job<TxConfirmationJobData>) => {
-    const context = `[recipeId=${job.data.recipeId} txHash=${job.data.txHash}]`;
-    console.log(`[BullMQ Confirm Worker] Processing job ${job.id} ${context}`);
+  await executeRecipeStepDirectly(jobData);
+  return 'direct';
+}
 
-    try {
-      await waitForReceiptAndPersist(job.data);
-      return {
-        status: 'CONFIRMED',
-        txHash: job.data.txHash,
-      };
-    } catch (error: unknown) {
-      const message = getErrorMessage(error);
-      const isRetryable = isRetryableRpcError(error);
-      const attemptsMade = job.attemptsMade + 1;
-      const maxAttempts = job.opts.attempts || 1;
+export function isRedisQueueEnabled(): boolean {
+  return REDIS_QUEUE_ENABLED;
+}
 
-      if (isRetryable && attemptsMade < maxAttempts) {
-        if (message.toLowerCase().includes('timeout')) {
-          incrementCounter('queue.confirmationTimeouts');
+export const recipeWorker = redisConnection
+  ? new Worker<RecipeExecutionJobData>(
+    'recipe-execution-queue',
+    async (job: Job<RecipeExecutionJobData>) => {
+      console.log(`[BullMQ Worker] Processing job ${job.id} ${getRecipeLogContext(job.data)}`);
+      return await executeRecipeStepDirectly(job.data);
+    },
+    {
+      connection: redisConnection,
+      concurrency: 8,
+    }
+  )
+  : (noopWorker as unknown as Worker<RecipeExecutionJobData>);
+
+export const txConfirmationWorker = redisConnection
+  ? new Worker<TxConfirmationJobData>(
+    'tx-confirmation-queue',
+    async (job: Job<TxConfirmationJobData>) => {
+      const context = `[recipeId=${job.data.recipeId} txHash=${job.data.txHash}]`;
+      console.log(`[BullMQ Confirm Worker] Processing job ${job.id} ${context}`);
+
+      try {
+        await waitForReceiptAndPersist(job.data);
+        return {
+          status: 'CONFIRMED',
+          txHash: job.data.txHash,
+        };
+      } catch (error: unknown) {
+        const message = getErrorMessage(error);
+        const isRetryable = isRetryableRpcError(error);
+        const attemptsMade = job.attemptsMade + 1;
+        const maxAttempts = job.opts.attempts || 1;
+
+        if (isRetryable && attemptsMade < maxAttempts) {
+          if (message.toLowerCase().includes('timeout')) {
+            incrementCounter('queue.confirmationTimeouts');
+          }
+          console.warn(
+            `[BullMQ Confirm Worker] Retryable confirmation error ${context} attempt=${attemptsMade}/${maxAttempts}: ${message}`
+          );
+          throw error;
         }
-        console.warn(
-          `[BullMQ Confirm Worker] Retryable confirmation error ${context} attempt=${attemptsMade}/${maxAttempts}: ${message}`
-        );
+
+        await markExecutionReverted(job.data.executionLogId, message);
         throw error;
       }
-
-      await markExecutionReverted(job.data.executionLogId, message);
-      throw error;
+    },
+    {
+      connection: redisConnection,
+      concurrency: 12,
     }
-  },
-  {
-    connection: redisConnection,
-    concurrency: 12,
-  }
-);
+  )
+  : (noopWorker as unknown as Worker<TxConfirmationJobData>);
 
 recipeWorker.on('error', () => {
   // Silence worker loop connection warnings to keep console clean

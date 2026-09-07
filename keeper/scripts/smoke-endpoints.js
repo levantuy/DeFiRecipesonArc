@@ -51,7 +51,7 @@ async function main() {
   const registerPayload = {
     userAddress,
     recipeType: 'RECURRING_DCA',
-    swapProvider: 'ARC_APP_KIT_SWAP',
+    swapProvider: 'ARC_LIFI_SWAP',
     parametersJson: {
       maxSlippageBps: 100,
       dcaAmountUsdc: '50',

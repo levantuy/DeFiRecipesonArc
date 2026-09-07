@@ -14,6 +14,7 @@ import {
 } from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
 import {
+  listActiveRecipes,
   listExecutionLogs,
   precheckDcaAllowance,
   registerOrActivateRecipe,
@@ -66,13 +67,180 @@ async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
 function setJsonResponse(res: http.ServerResponse, statusCode: number, payload: Record<string, unknown>) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.end(JSON.stringify(payload));
 }
 
-function createHealthServer(port: number) {
+function isProtectedPath(pathName: string): boolean {
+  return pathName.startsWith('/recipes/') || pathName === '/metrics';
+}
+
+function getClientIp(req: http.IncomingMessage): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown';
+  }
+
+  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
+    return forwardedFor[0]?.trim() || 'unknown';
+  }
+
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function normalizeIp(ip: string): string {
+  const trimmed = ip.trim();
+  if (trimmed.startsWith('::ffff:')) {
+    return trimmed.slice(7);
+  }
+  return trimmed;
+}
+
+function isInternalIp(ip: string): boolean {
+  const normalized = normalizeIp(ip);
+  if (
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.startsWith('10.') ||
+    normalized.startsWith('192.168.')
+  ) {
+    return true;
+  }
+
+  if (normalized.startsWith('172.')) {
+    const segments = normalized.split('.');
+    const secondOctet = Number(segments[1]);
+    if (Number.isInteger(secondOctet) && secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
+  }
+
+  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:')) {
+    return true;
+  }
+
+  return false;
+}
+
+function isInternalOnlyPath(pathName: string): boolean {
+  return RUNTIME_CONFIG.keeperInternalOnlyPaths.includes(pathName);
+}
+
+function enforceInternalOnlyPolicy(req: http.IncomingMessage, pathName: string, res: http.ServerResponse): boolean {
+  if (!RUNTIME_CONFIG.keeperInternalOnlyEnforced) {
+    return true;
+  }
+
+  if (!isInternalOnlyPath(pathName)) {
+    return true;
+  }
+
+  const clientIp = getClientIp(req);
+  if (isInternalIp(clientIp)) {
+    return true;
+  }
+
+  setJsonResponse(res, 403, {
+    success: false,
+    error: 'This endpoint is restricted to internal network access.',
+  });
+  return false;
+}
+
+function applyCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const originHeader = req.headers.origin;
+  const allowedOrigins = new Set(RUNTIME_CONFIG.keeperCorsAllowedOrigins);
+
+  if (!originHeader) {
+    res.setHeader('Vary', 'Origin');
+    return true;
+  }
+
+  if (allowedOrigins.has(originHeader)) {
+    res.setHeader('Access-Control-Allow-Origin', originHeader);
+    res.setHeader('Vary', 'Origin');
+    return true;
+  }
+
+  setJsonResponse(res, 403, {
+    success: false,
+    error: 'Origin is not allowed by CORS policy.',
+  });
+  return false;
+}
+
+function setCommonResponseHeaders(res: http.ServerResponse) {
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+function authorizeRequest(req: http.IncomingMessage, pathName: string, res: http.ServerResponse): boolean {
+  if (!isProtectedPath(pathName)) {
+    return true;
+  }
+
+  if (!RUNTIME_CONFIG.keeperApiRequireAuth) {
+    return true;
+  }
+
+  const authHeader = req.headers.authorization;
+  const tokenPrefix = 'Bearer ';
+  const token =
+    typeof authHeader === 'string' && authHeader.startsWith(tokenPrefix)
+      ? authHeader.slice(tokenPrefix.length).trim()
+      : '';
+
+  if (token.length === 0 || token !== RUNTIME_CONFIG.keeperApiAuthToken) {
+    setJsonResponse(res, 401, {
+      success: false,
+      error: 'Unauthorized.',
+    });
+    return false;
+  }
+
+  return true;
+}
+
+type RateLimitState = {
+  windowStartedAtMs: number;
+  requestCount: number;
+};
+
+const rateLimitByIp = new Map<string, RateLimitState>();
+
+function enforceRateLimit(req: http.IncomingMessage, pathName: string, res: http.ServerResponse): boolean {
+  if (!isProtectedPath(pathName)) {
+    return true;
+  }
+
+  const now = Date.now();
+  const key = getClientIp(req);
+  const windowMs = RUNTIME_CONFIG.keeperApiRateLimitWindowMs;
+  const maxRequests = RUNTIME_CONFIG.keeperApiRateLimitMaxRequests;
+
+  const current = rateLimitByIp.get(key);
+  if (!current || now - current.windowStartedAtMs >= windowMs) {
+    rateLimitByIp.set(key, {
+      windowStartedAtMs: now,
+      requestCount: 1,
+    });
+    return true;
+  }
+
+  current.requestCount += 1;
+  if (current.requestCount > maxRequests) {
+    const retryAfterSeconds = Math.ceil((windowMs - (now - current.windowStartedAtMs)) / 1000);
+    res.setHeader('Retry-After', String(Math.max(retryAfterSeconds, 1)));
+    setJsonResponse(res, 429, {
+      success: false,
+      error: 'Rate limit exceeded. Retry later.',
+    });
+    return false;
+  }
+
+  return true;
+}
+
+export function createHealthServer(port: number) {
   const startedAt = new Date().toISOString();
   const keeperAddress = getKeeperAccount().address;
   const server = http.createServer(async (req, res) => {
@@ -80,8 +248,26 @@ function createHealthServer(port: number) {
     const pathName = requestUrl.pathname;
     const method = (req.method || 'GET').toUpperCase();
 
+    setCommonResponseHeaders(res);
+
+    if (!applyCorsHeaders(req, res)) {
+      return;
+    }
+
     if (method === 'OPTIONS') {
       setJsonResponse(res, 204, {});
+      return;
+    }
+
+    if (!enforceInternalOnlyPolicy(req, pathName, res)) {
+      return;
+    }
+
+    if (!authorizeRequest(req, pathName, res)) {
+      return;
+    }
+
+    if (!enforceRateLimit(req, pathName, res)) {
       return;
     }
 
@@ -143,6 +329,22 @@ function createHealthServer(port: number) {
       return;
     }
 
+    if (pathName === '/recipes' && method === 'GET') {
+      try {
+        const payload = await listActiveRecipes({
+          userAddress: requestUrl.searchParams.get('userAddress') || undefined,
+          limit: requestUrl.searchParams.get('limit') || undefined,
+        });
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
     if (pathName === '/metrics' && method === 'GET') {
       setJsonResponse(res, 200, {
         status: 'ok',
@@ -183,6 +385,19 @@ function createHealthServer(port: number) {
 
   server.listen(port, () => {
     console.log(`[Health] Keeper health endpoint listening at http://localhost:${port}/healthz`);
+    if (RUNTIME_CONFIG.keeperApiRequireAuth) {
+      console.log('[Health] Keeper API auth is enabled for protected endpoints.');
+    } else {
+      console.warn('[Health Warning] Keeper API auth is disabled. Do not use this mode in production.');
+    }
+    console.log(
+      `[Health] Keeper CORS allowlist contains ${RUNTIME_CONFIG.keeperCorsAllowedOrigins.length} origin(s).`
+    );
+    if (RUNTIME_CONFIG.keeperInternalOnlyEnforced) {
+      console.log(
+        `[Health] Internal-only policy enforced for: ${RUNTIME_CONFIG.keeperInternalOnlyPaths.join(', ')}`
+      );
+    }
   });
 
   return server;
@@ -200,6 +415,7 @@ export async function startKeeperEngine() {
   console.log(`[Config] Arc Chain ID           : ${ARC_TESTNET_CONFIG.chainId}`);
   console.log(`[Config] Arc RPC URL            : ${ARC_TESTNET_CONFIG.rpcUrl}`);
   console.log(`[Config] Keeper Address         : ${account.address}`);
+  console.log(`[Config] Queue Mode             : ${RUNTIME_CONFIG.keeperUseRedisQueue ? 'REDIS_BULLMQ' : 'DIRECT_NO_REDIS'}`);
   console.log(`[Config] Shared Executor Proxy   : ${CONTRACT_ADDRESSES.sharedExecutorProxy}`);
   console.log(`[Config] Recipe Guardrail       : ${CONTRACT_ADDRESSES.recipeGuardrail}`);
   console.log(`[Config] Session Key Registry   : ${CONTRACT_ADDRESSES.sessionKeyRegistry}`);

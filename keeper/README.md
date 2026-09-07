@@ -1,5 +1,31 @@
 # Keeper Service Notes
 
+## Chế độ Redis queue (tùy chọn qua .env)
+
+Keeper hỗ trợ 2 chế độ chạy qua biến môi trường `KEEPER_USE_REDIS_QUEUE`:
+
+1. `KEEPER_USE_REDIS_QUEUE=true` (khuyến nghị cho production)
+   - Cron scheduler đẩy job vào BullMQ.
+   - Xác nhận giao dịch chạy qua queue xác nhận (`tx-confirmation-queue`).
+   - Cần `REDIS_URL` hợp lệ.
+
+2. `KEEPER_USE_REDIS_QUEUE=false` (phù hợp local/dev hoặc chế độ suy giảm)
+   - Cron scheduler thực thi trực tiếp, không cần Redis.
+   - Nếu `KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH=false`, keeper tự động fallback sang xác nhận đồng bộ để tránh mất trạng thái xác nhận tx.
+   - Không có durability/retry ở tầng queue, không phù hợp cho tải production.
+
+Ví dụ `.env`:
+
+```bash
+KEEPER_USE_REDIS_QUEUE=true
+REDIS_URL=redis://localhost:6379
+```
+
+```bash
+KEEPER_USE_REDIS_QUEUE=false
+# REDIS_URL có thể bỏ qua trong chế độ này
+```
+
 ## Database migrations (SQL runner)
 
 Legacy ORM integration has been removed from keeper runtime and package scripts.
@@ -25,19 +51,29 @@ npm run db:migrate
 The SQL runner stores applied migrations in `_sql_migrations` with checksum verification.
 If a migration checksum changes after being applied, the runner will fail to prevent drift.
 
-## DCA routing policy (single path)
+## DCA routing policy (partial migration)
 
-RECURRING_DCA now uses a single execution path only:
+RECURRING_DCA now uses LI.FI route resolution on Arc Testnet by default:
 
-1. Keeper resolves route + transaction payload through `dcaSwapRouteClient` (ARC App Kit Swap).
+1. Keeper resolves route + transaction payload through `dcaSwapRouteClient` (LI.FI, Arc-only).
 2. Keeper executes the returned `targetProtocolAddress` and `callData` directly.
-3. If App Kit returns `No route available`, the recipe is skipped for that cycle and logged as action-required.
+3. If LI.FI returns `No route available`, the recipe is skipped for that cycle and logged as action-required.
+
+Runtime notes:
+
+- Default DCA provider is `ARC_LIFI_SWAP`.
+- To use Arc App Kit swap flow (`https://docs.arc.io/app-kit/swap`) from `.env`, set `DCA_ROUTE_PROVIDER=APP_KIT_SWAP` (or `ARC_APP_KIT_SWAP`).
+- Optional internal fallback can be enabled with `DCA_ROUTE_ALLOW_APP_KIT_FALLBACK=true`.
+- Fallback scope is Arc Testnet only. Keeper never switches DCA route resolution to another chain.
+- If LI.FI does not support Arc in the current environment, route resolution fails with explicit error.
+- App Kit credentials support both legacy and current names: `ARC_APP_KIT_API_KEY` (preferred) or `ARC_APP_KIT_KEY` (legacy).
 
 Legacy fallback swap construction (e.g. local `swapExactTokensForTokens` callData assembly from configured `targetProtocol`) is intentionally disabled to keep runtime behavior deterministic.
 
 API contract for `POST /recipes/register` with `recipeType=RECURRING_DCA`:
 
-- `swapProvider` is always enforced to `ARC_APP_KIT_SWAP`.
+- `swapProvider` defaults to `ARC_LIFI_SWAP`.
+- `swapProvider=ARC_APP_KIT_SWAP` is accepted for legacy fallback scenarios.
 - `targetProtocol` is not accepted.
 
 ## Endpoint smoke and cleanup for staging pipeline
@@ -61,3 +97,57 @@ Environment options:
 - `CLEANUP_USER_ADDRESS`: user address to cleanup (defaults to smoke test address)
 - `PIPELINE_RUN_CLEANUP`: set `false` to skip cleanup
 - `PIPELINE_CLEANUP_ON_FAILURE`: set `false` to skip cleanup if smoke fails
+
+## API security hardening (P0)
+
+Keeper now enforces security controls on protected endpoints (`/recipes/*`, `/metrics`):
+
+1. Bearer token authentication (recommended required in production).
+2. CORS allowlist (no wildcard origin).
+3. Per-IP fixed-window rate limiting.
+
+Environment variables:
+
+- `KEEPER_API_REQUIRE_AUTH`: `true`/`false` (defaults to `true` in production mode).
+- `KEEPER_API_AUTH_TOKEN`: required when auth is enabled.
+- `KEEPER_CORS_ALLOWED_ORIGINS`: comma-separated origins.
+- `KEEPER_API_RATE_LIMIT_WINDOW_MS`: rate-limit window duration.
+- `KEEPER_API_RATE_LIMIT_MAX_REQUESTS`: max requests per IP in each window.
+- `KEEPER_INTERNAL_ONLY_ENFORCED`: app-layer enforcement for internal-only endpoints.
+- `KEEPER_INTERNAL_ONLY_PATHS`: comma-separated paths restricted to internal network.
+
+Ingress/reverse-proxy policy (required in production):
+
+- Keep `GET /healthz` and `GET /metrics` internal-only (cluster/private network).
+- Expose `POST /recipes/register`, `POST /recipes/status`, `POST /recipes/dca/allowance-precheck`, `GET /recipes/logs` only through authenticated ingress.
+
+Example Nginx policy snippet:
+
+```nginx
+location /healthz {
+   allow 10.0.0.0/8;
+   allow 172.16.0.0/12;
+   allow 192.168.0.0/16;
+   deny all;
+   proxy_pass http://keeper_upstream;
+}
+
+location /metrics {
+   allow 10.0.0.0/8;
+   allow 172.16.0.0/12;
+   allow 192.168.0.0/16;
+   deny all;
+   proxy_pass http://keeper_upstream;
+}
+```
+
+Reference file: `deploy/nginx/keeper-internal-only.conf`.
+
+Example call to protected endpoint:
+
+```bash
+curl -X POST http://localhost:8787/recipes/register \
+   -H "Authorization: Bearer $KEEPER_API_AUTH_TOKEN" \
+   -H "Content-Type: application/json" \
+   -d '{"userAddress":"0x...","recipeType":"RECURRING_DCA"}'
+```

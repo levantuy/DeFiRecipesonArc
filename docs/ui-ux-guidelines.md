@@ -35,20 +35,20 @@ Tự động hóa DeFi đòi hỏi tính minh bạch cao, loại bỏ sự mơ h
 
 ## 3. Trình Giả lập Giao dịch (Simulation Preview Modal UX)
 
-Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Compound hoặc Yield Rebalancer), hệ thống bắt buộc phải hiển thị **Simulation Modal** bao gồm các phần:
+Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Compound hoặc Recurring DCA), hệ thống bắt buộc phải hiển thị **Simulation Modal** bao gồm các phần:
 
 ```
 +-------------------------------------------------------------+
 |  [Simulating Recipe Execution...]                [X] Close  |
 +-------------------------------------------------------------+
 |  ROUTING & ASSET FLOW                                       |
-|  [1. Arc Lending] Withdraw 500 USDC                         |
-|  [2. Arc App Kit Swap] Swap 500 USDC -> Vault Shares         |
-|  [3. Deposit] Auto-stake to High Yield Vault                |
+|  [1. User Wallet] Reserve 50 USDC for recurring execution   |
+|  [2. Arc App Kit Swap] Swap 50 USDC -> EURC                 |
+|  [3. Delivery] Transfer EURC to user wallet                 |
 +-------------------------------------------------------------+
 |  PARAMETERS & PROTECTION                                    |
 |  - Max Slippage Tolerance: [ 0.5% ] (Editable Slider)       |
-|  - Est. Yield Gain: +4.2% APY Net                           |
+|  - Est. Output: 49.7 EURC (market dependent)                |
 |  - Est. Keeper Gas Fee: ~0.008 USDC                         |
 +-------------------------------------------------------------+
 |  [ Confirm & Delegate Execution (Sign EIP-712) ]            |

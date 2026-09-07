@@ -18,14 +18,14 @@ Nền tảng hoạt động như một **lớp tự động hoá công việc De
 
 ### Phân kỳ Phát triển (Phased Scope)
 * **Phase 1 (MVP P0):** 
-  * 3 Recipes cốt lõi: **USDC Yield Auto-Compounder**, **USDC Recurring DCA**, **USDC Smart Yield Rebalancer**.
+  * 2 Recipes cốt lõi: **USDC Yield Auto-Compounder** và **USDC -> EURC Recurring DCA**.
   * Audited `SharedExecutorProxy` Smart Contract với rào chắn bảo vệ (Guardrails) & kiểm tra trượt giá (Slippage Check).
-  * Node.js/TypeScript Worker Service (Time-based Cron, APY Monitor, Static Simulation via `eth_call`).
+  * Node.js/TypeScript Worker Service (Time-based Cron, DCA Route Resolution, Static Simulation via `eth_call`).
   * Web Dashboard: Luồng kích hoạt 1-Click, Hộp thoại Giả lập (Simulation Modal), Trình quản lý Portfolio & Audit Log realtime.
   * Phí giao dịch: Miễn phí nền tảng trong giai đoạn MVP (Keeper tài trợ phí gas USDC trên Arc).
 * **Phase 2 (P1 Roadmap):**
-  * 2 Recipes mở rộng: **USDC Safety Net / Stop-Loss Protection**, **USDC Fixed-Interval Savings Stream**.
-  * Nâng cấp Keeper Engine phân tán Multi-region & Tích hợp Circle SCP Wallet Delegation / Account Abstraction Native.
+  * Tập trung tối ưu độ ổn định và khả năng mở rộng cho 2 Recipe cốt lõi.
+  * Nâng cấp Keeper Engine phân tán Multi-region & Tích hợp Circle SCP Wallet Delegation / Account Abstraction Native cho Auto-Compounder và Recurring DCA.
   * Tùy chọn khấu trừ Performance Fee (ví dụ: 2% trên phần thưởng Compound).
 
 ---
@@ -62,7 +62,6 @@ graph TD
     subgraph ProtocolLayer ["5. Whitelisted Arc Protocols"]
         LENDING["Arc Lending Protocol"]
       SWAP["Arc App Kit Swap Service"]
-        VAULT["USDC Treasury Vaults"]
     end
 
     UI -->|1. Setup Delegation| SK
@@ -73,8 +72,8 @@ graph TD
     EXECUTOR --> GUARD
     GUARD --> SLIPPAGE
     SLIPPAGE --> PAUSE
-    PAUSE -->|6. Execute Approved Calls| LENDING & SWAP & VAULT
-    LENDING & SWAP & VAULT -->|7. Emit Events| MONITOR
+    PAUSE -->|6. Execute Approved Calls| LENDING & SWAP
+    LENDING & SWAP -->|7. Emit Events| MONITOR
     MONITOR -->|8. Real-time Status Update| DASH
 ```
 
@@ -185,7 +184,7 @@ graph TD
 
 ---
 
-### Epic 3: Technical Specifications for Official Recipes (Chi tiết 5 Official Recipes)
+### Epic 3: Technical Specifications for Official Recipes (Chi tiết 2 Official Recipes)
 
 ---
 
@@ -250,67 +249,10 @@ sequenceDiagram
 
 ---
 
-#### F-3.3: Recipe 3 - USDC Smart Yield Rebalancer (P0 - MVP Core)
+#### F-3.3: Scope Lock for MVP
 
-* **Mục tiêu:** Tự động di chuyển vốn giữa Arc Lending và USDC Treasury Vaults để liên tục hưởng APY cao nhất.
-* **Điều kiện kích hoạt (Trigger Condition):**
-  $$\Delta APY = |APY_{\text{Lending}} - APY_{\text{Vault}}| \ge 1.5\% \quad \text{duy trì liên tục } \ge 24 \text{ giờ}$$
-* **Quy trình chi tiết (Detailed Workflow):**
-
-```mermaid
-graph TD
-    A[Keeper Worker Monitor APY Realtime] --> B{Delta APY >= 1.5% for 24h?}
-    B -- No --> A
-    B -- Yes --> C[Calculate Migration Amount]
-    C --> D[Simulate eth_call Migration]
-    D --> E{Simulation Success?}
-    E -- No --> F[Log Simulation Error & Retry in 1h]
-    E -- Yes --> G[Submit Tx to SharedExecutor]
-    G --> H[Withdraw USDC from Low Yield Protocol]
-    H --> I[Verify Received USDC Balance]
-    I --> J[Deposit USDC into High Yield Protocol]
-    J --> K[Update Position Tracker & Emit Event]
-```
-
-* **Tham số Đầu vào (Input Parameters):**
-  * `minApyDeltaBps`: Chênh lệch APY tối thiểu để rebalance (`150` = 1.5%).
-  * `sustainedDurationHours`: Thời gian duy trì chênh lệch bắt buộc (`24` giờ).
-  * `rebalanceRatioBps`: Tỷ lệ vốn di chuyển (`10000` = 100% vị thế).
-* **Xử lý Lỗi & Ngoại lệ (Edge Cases):**
-  * *Protocol nguồn bị khóa rút tiền (Withdraw Lock / Liquidity Crunch):* Keeper phát hiện lỗi qua Static Simulation, lập tức ngắt giao dịch và cảnh báo `LIQUIDITY_CRUNCH_DETECTED`.
-
----
-
-#### F-3.4: Recipe 4 - USDC Safety Net / Stop-Loss Protection (P1 - Phase 2 Roadmap)
-
-* **Mục tiêu:** Tự động rút tiền gửi hoặc rút vốn trả nợ để bảo vệ vị thế vay khỏi rủi ro thanh lý khi thị trường biến động.
-* **Điều kiện kích hoạt:**
-  $$\text{Health Factor (HF)} < 1.15 \quad \text{HOẶC} \quad \text{Collateral Price drops } > 15\% / 1\text{h}$$
-* **Quy trình chi tiết (Detailed Workflow):**
-  1. Keeper Event Monitor theo dõi `HealthFactor` của người dùng trên Arc Lending 24/7.
-  2. Khi HF chạm ngưỡng cảnh báo ($HF < 1.15$):
-     * Keeper lập tức gửi giao dịch ưu tiên cao (High Gas Priority) đến `SharedExecutor`.
-    * `SharedExecutor` rút một phần tài sản thế chấp (USDC/cirBTC) hoặc dùng USDC dự phòng trong ví để trả bớt khoản vay (Repay Debt).
-     * Đưa Health Factor trở lại vùng an toàn ($HF \ge 1.40$).
-* **Tham số Đầu vào (Input Parameters):**
-  * `minHealthFactor`: Ngưỡng HF kích hoạt bảo vệ (mặc định: `1150` = 1.15).
-  * `targetHealthFactor`: Ngưỡng HF an toàn sau khi xử lý (mặc định: `1400` = 1.40).
-
----
-
-#### F-3.5: Recipe 5 - USDC Fixed-Interval Savings Stream (P1 - Phase 2 Roadmap)
-
-* **Mục tiêu:** Tự động trích một tỷ lệ % cố định từ dòng tiền USDC nhận vào ví để gửi vào Vault tiết kiệm tích lũy.
-* **Điều kiện kích hoạt:** Phát sinh sự kiện `Transfer(to = UserWallet, value >= minIncomingUsdc)`.
-* **Quy trình chi tiết (Detailed Workflow):**
-  1. Keeper theo dõi sự kiện nhận USDC trên ví người dùng.
-  2. Khi có khoản nộp vào (vd: nhận lương $1,000$ USDC):
-     * Keeper trích đúng $X\%$ (vd: $20\% = 200$ USDC).
-     * Gửi $200$ USDC vào Treasury Vaults sinh lãi.
-     * Để lại $800$ USDC còn lại trong ví để người dùng chi tiêu linh hoạt.
-* **Tham số Đầu vào (Input Parameters):**
-  * `savingsAllocationBps`: Tỷ lệ trích tiết kiệm (`2000` = 20%).
-  * `minIncomingUsdc`: Hạn mức giao dịch tối thiểu để kích hoạt (`100000000` = 100 USDC).
+* MVP hiện tại chỉ hỗ trợ 2 luồng chính thức: **USDC Yield Auto-Compounder** và **USDC -> EURC Recurring DCA**.
+* Mọi recipe ngoài 2 luồng trên được xem là **out of scope** trong tài liệu, API, scheduler và giao diện sản phẩm hiện tại.
 
 ---
 
@@ -395,7 +337,6 @@ graph LR
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | 2026-07-27 10:00 | Yield Auto-Compounder | Claim & Re-deposit | +12.45 USDC | <span style="color:green">Success</span> | [`0xabc...123`](#) |
 | 2026-07-27 09:00 | Recurring DCA | Swap USDC -> EURC | 50.00 USDC | <span style="color:green">Success</span> | [`0xdef...456`](#) |
-| 2026-07-26 14:30 | Yield Rebalancer | Rebalance Lending -> Vault | 1,000.00 USDC | <span style="color:red">Reverted (Slippage)</span> | [`0x789...ghi`](#) |
 
 ---
 
@@ -422,9 +363,6 @@ graph LR
 | :--- | :---: | :---: | :---: |
 | **Recipe 1: Yield Auto-Compounder** | **Full Specs (P0)** | Nâng cấp Multi-Vault | Custom Compound Strategy |
 | **Recipe 2: Recurring DCA** | **Full Specs (P0)** | USDC -> EURC DCA | Limit Order Integration |
-| **Recipe 3: Smart Yield Rebalancer** | **Full Specs (P0)** | AI-driven Yield Prediction | Cross-chain Rebalancing |
-| **Recipe 4: Safety Net / Stop-Loss** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Advanced Liquidation Shield |
-| **Recipe 5: Savings Stream** | Tài liệu Specs (P1) | **Triển khai P1 Core** | Employer Payroll Stream |
 | **Shared Executor Smart Contract** | **Audited Proxy Core** | Modular Contract Plugins | Custom Logic Assembly |
 | **Off-Chain Keeper Engine** | **Node.js Single Worker** | Multi-Region Distributed | Decentralized Keeper Network |
 | **Authorization Layer** | **ERC-4337 Session Keys** | Circle SCP Integration | Account Abstraction Native |
@@ -437,4 +375,4 @@ graph LR
 
 Tài liệu **DeFi Recipes on Arc (v2.0)** đã hoàn thiện mô tả chi tiết từ cấp độ **Nghiệp vụ (Business Rules), Kiến trúc Smart Contract, Luồng xử lý Off-Chain Keeper cho đến Giao diện Người dùng**.
 
-Bằng việc tập trung tối đa vào **3 Recipe cốt lõi (Auto-Compounder, DCA, Rebalancer)** cho phiên bản MVP Phase 1 cùng rào chắn bảo vệ an toàn trên `SharedExecutorProxy`, dự án thiết lập một nền tảng vững chắc để triển khai phát triển nhanh chóng, đảm bảo tính bảo mật và trải nghiệm người dùng vượt trội trên Arc Network.
+Bằng việc tập trung tối đa vào **2 Recipe cốt lõi (Auto-Compounder, DCA)** cho phiên bản MVP Phase 1 cùng rào chắn bảo vệ an toàn trên `SharedExecutorProxy`, dự án thiết lập một nền tảng vững chắc để triển khai phát triển nhanh chóng, đảm bảo tính bảo mật và trải nghiệm người dùng vượt trội trên Arc Network.

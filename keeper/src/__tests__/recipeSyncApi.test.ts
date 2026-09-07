@@ -60,7 +60,7 @@ describe('recipeSyncApi register validation', () => {
     const result = await registerOrActivateRecipe({
       userAddress: '0x1111111111111111111111111111111111111111',
       recipeType: 'RECURRING_DCA',
-      swapProvider: 'ARC_APP_KIT_SWAP',
+      swapProvider: 'ARC_LIFI_SWAP',
       parametersJson: {
         maxSlippageBps: 100,
         totalBudgetUsdc: '50',
@@ -72,7 +72,7 @@ describe('recipeSyncApi register validation', () => {
     expect(result.success).toBe(true);
     expect(result.recipe).toMatchObject({
       targetProtocol: null,
-      swapProvider: 'ARC_APP_KIT_SWAP',
+      swapProvider: 'ARC_LIFI_SWAP',
     });
     expect(createWithUserConnectOrCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -107,7 +107,7 @@ describe('recipeSyncApi register validation', () => {
     await registerOrActivateRecipe({
       userAddress: '0x1111111111111111111111111111111111111111',
       recipeType: 'RECURRING_DCA',
-      swapProvider: 'ARC_APP_KIT_SWAP',
+      swapProvider: 'ARC_LIFI_SWAP',
       parametersJson: {
         totalBudgetUsdc: '50',
         perExecutionAmountUsdc: '5',
@@ -130,7 +130,7 @@ describe('recipeSyncApi register validation', () => {
       registerOrActivateRecipe({
         userAddress: '0x1111111111111111111111111111111111111111',
         recipeType: 'RECURRING_DCA',
-        swapProvider: 'ARC_APP_KIT_SWAP',
+        swapProvider: 'ARC_LIFI_SWAP',
         parametersJson: {
           totalBudgetUsdc: '50',
           perExecutionAmountUsdc: '5',
@@ -146,7 +146,7 @@ describe('recipeSyncApi register validation', () => {
       registerOrActivateRecipe({
         userAddress: '0x1111111111111111111111111111111111111111',
         recipeType: 'RECURRING_DCA',
-        swapProvider: 'ARC_APP_KIT_SWAP',
+        swapProvider: 'ARC_LIFI_SWAP',
         parametersJson: {
           maxSlippageBps: 5000,
           totalBudgetUsdc: '50',
@@ -162,7 +162,7 @@ describe('recipeSyncApi register validation', () => {
       registerOrActivateRecipe({
         userAddress: '0x1111111111111111111111111111111111111111',
         recipeType: 'RECURRING_DCA',
-        swapProvider: 'ARC_APP_KIT_SWAP',
+        swapProvider: 'ARC_LIFI_SWAP',
         parametersJson: {
           totalBudgetUsdc: '10',
           perExecutionAmountUsdc: '20',
@@ -177,7 +177,7 @@ describe('recipeSyncApi register validation', () => {
       registerOrActivateRecipe({
         userAddress: '0x1111111111111111111111111111111111111111',
         recipeType: 'RECURRING_DCA',
-        swapProvider: 'ARC_APP_KIT_SWAP',
+        swapProvider: 'ARC_LIFI_SWAP',
         parametersJson: {
           perExecutionAmountUsdc: '5',
           mode: 'PULL',

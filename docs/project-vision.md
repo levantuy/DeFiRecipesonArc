@@ -2,7 +2,7 @@
 ## Project Vision v2.1
 
 > **Trusted, Secure, and Automated DeFi Workflows on Arc**  
-> *Focus: Core Execution, Smart Contract Security & Initial 3-5 Official Recipes*
+> *Focus: Core Execution, Smart Contract Security & 2 Official Recipes*
 
 **Version:** 2.1 (Lean Core Execution & Security Focus)  
 **Status:** Vision & MVP Specification  
@@ -22,11 +22,11 @@ It is **not** an official product of Arc Network and is not affiliated with or e
 
 # Executive Summary
 
-DeFi on Arc offers ultra-low fees, sub-second finality, and USDC as a native gas token. However, maximizing yields and managing risks still requires continuous manual monitoring, claiming rewards, swapping, and rebalancing positions across protocols.
+DeFi on Arc offers ultra-low fees, sub-second finality, and USDC as a native gas token. However, maximizing yields still requires continuous manual monitoring, claiming rewards, and recurring swaps for accumulation strategies.
 
 **DeFi Recipes on Arc** solves this by providing a **secure workflow automation layer**. Instead of requiring users to construct complex interactions or trust unverified third-party bots, the platform delivers audited, non-custodial **Official Recipes**—pre-packaged automated financial workflows that execute transparently and predictably on Arc.
 
-For the initial MVP launch, the project focuses 100% on **Core Execution, Smart Contract Security, and 3-5 Battle-Tested Official Recipes**, postponing complex community marketplaces and visual builders to later phases.
+For the current MVP scope, the project focuses 100% on **Core Execution, Smart Contract Security, and 2 Battle-Tested Official Recipes**, postponing complex community marketplaces and visual builders to later phases.
 
 ---
 
@@ -58,9 +58,9 @@ In the MVP phase, execution is strictly constrained to audited, whitelisted Arc 
 
 ---
 
-# The Core 5 Official MVP Recipes
+# The Core 2 Official MVP Recipes
 
-To deliver immediate value with maximum security, MVP development centers on **5 curated, high-utility USDC recipes**:
+To deliver immediate value with maximum security, MVP development centers on **2 curated, high-utility USDC recipes**:
 
 ### Recipe 1: USDC Yield Auto-Compounder
 * **Goal:** Maximize compounding yield on Arc Lending.
@@ -72,22 +72,6 @@ To deliver immediate value with maximum security, MVP development centers on **5
 * **Workflow:** Hold USDC in user wallet → Trigger weekly/monthly → Swap pre-set USDC amount to EURC via Arc App Kit Swap routes with slippage limits → Transfer acquired EURC back to user wallet.
 * **Risk Level:** Low-Medium.
 
-### Recipe 3: USDC Smart Yield Rebalancer
-* **Goal:** Dynamic yield optimization between conservative protocols.
-* **Workflow:** Monitor APY across Arc Lending and USDC Treasury Vaults → If APY delta exceeds 1.5% for >24 hours → Withdraw portion from lower yield pool → Deposit into higher yield pool.
-* **Risk Level:** Medium.
-
-### Recipe 4: USDC Safety Net / Stop-Loss Protection
-* **Goal:** Automated capital preservation during market volatility or yield drops.
-* **Workflow:** Monitor collateral health factor or protocol liquidity → If health factor drops below safety threshold → Automatically repay partial debt or withdraw deposit back to pure USDC in wallet.
-* **Risk Level:** Low (Protective).
-
-### Recipe 5: USDC Fixed-Interval Savings Stream
-* **Goal:** Systematic automated savings.
-* **Workflow:** Receive periodic USDC deposits → Automatically route designated % to yield-bearing pool → Retain balance in liquid wallet.
-* **Risk Level:** Low.
-
----
 
 # Architecture & Security Model
 
@@ -122,7 +106,7 @@ To deliver immediate value with maximum security, MVP development centers on **5
 
 | Feature / Component | MVP Scope (v2.1) | Future Phases |
 | :--- | :--- | :--- |
-| **Official Recipes** | **Included (3-5 Core Recipes)** | Expanded Suite |
+| **Official Recipes** | **Included (2 Core Recipes)** | Expanded Suite |
 | **Shared Executor Contract** | **Included (Audited & Scoped)** | Modular Plugins |
 | **Off-chain Keeper Engine** | **Included (Cron & Event Triggers)** | Decentralized Keeper Network |
 | **UI Dashboard** | **Included (1-Click Activate & Portfolio Tracker)** | Advanced Analytics |
@@ -138,7 +122,7 @@ To deliver immediate value with maximum security, MVP development centers on **5
 
 ```
 Phase 1: Core Execution & Security (Current Focus)
-  ├── 3-5 Official USDC Recipes
+  ├── 2 Official USDC Recipes
   ├── Audited Shared Executor Contract
   ├── Scoped Session Key Delegation
   └── 1-Click UI & Execution Tracker
@@ -163,4 +147,4 @@ Phase 4: Ecosystem Expansion & Advanced Tooling
 
 # Summary
 
-By narrowing the immediate focus to **Core Execution, Smart Contract Security, and 3-5 Official Recipes**, DeFi Recipes on Arc establishes a rock-solid foundation. This pragmatic approach delivers high value to Arc users quickly while keeping development lean and maintainable.
+By narrowing the immediate focus to **Core Execution, Smart Contract Security, and 2 Official Recipes**, DeFi Recipes on Arc establishes a rock-solid foundation. This pragmatic approach delivers high value to Arc users quickly while keeping development lean and maintainable.

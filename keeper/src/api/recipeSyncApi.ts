@@ -37,9 +37,15 @@ interface UpdateRecipeStatusPayload {
   userAddress?: unknown;
   recipeType?: unknown;
   status?: unknown;
+  txHash?: unknown;
 }
 
 interface ListExecutionLogsPayload {
+  userAddress?: unknown;
+  limit?: unknown;
+}
+
+interface ListRecipesPayload {
   userAddress?: unknown;
   limit?: unknown;
 }
@@ -66,6 +72,9 @@ const ERC20_ALLOWANCE_ABI = [
 ] as const;
 
 const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+const DCA_ALWAYS_STRICT_SPENDERS = new Set<string>([
+  '0x00000000000000000000000000000000000000c0',
+]);
 const DCA_SWAP_ABI = [
   {
     type: 'function',
@@ -151,11 +160,11 @@ function parseRegisterPayload(rawBody: unknown): {
 
   if (recipeType === RecipeType.RECURRING_DCA) {
     if (targetProtocol) {
-      throw new Error('RECURRING_DCA does not accept targetProtocol. Route resolution is managed by ARC_APP_KIT_SWAP.');
+      throw new Error('RECURRING_DCA does not accept targetProtocol. Route resolution is managed by ARC_LIFI_SWAP.');
     }
 
-    if (swapProvider !== null && swapProvider !== 'ARC_APP_KIT_SWAP') {
-      throw new Error('RECURRING_DCA requires swapProvider=ARC_APP_KIT_SWAP.');
+    if (swapProvider !== null && swapProvider !== 'ARC_LIFI_SWAP' && swapProvider !== 'ARC_APP_KIT_SWAP') {
+      throw new Error('RECURRING_DCA requires swapProvider=ARC_LIFI_SWAP (or ARC_APP_KIT_SWAP for legacy fallback).');
     }
 
     let dcaParameters = { ...(parametersJson as Record<string, unknown>) };
@@ -187,7 +196,7 @@ function parseRegisterPayload(rawBody: unknown): {
       userAddress,
       recipeType,
       targetProtocol: null,
-      swapProvider: 'ARC_APP_KIT_SWAP',
+      swapProvider: swapProvider ?? 'ARC_LIFI_SWAP',
       parametersJson,
     };
   }
@@ -222,16 +231,26 @@ function parseStatusPayload(rawBody: unknown): {
   userAddress: string;
   recipeType: RecipeType;
   status: RecipeStatus;
+  txHash?: `0x${string}`;
 } {
   if (!isRecord(rawBody)) {
     throw new Error('Request body must be a JSON object.');
   }
 
   const body = rawBody as UpdateRecipeStatusPayload;
+  let txHash: `0x${string}` | undefined;
+  if (body.txHash !== undefined) {
+    if (typeof body.txHash !== 'string' || !/^0x[a-fA-F0-9]{64}$/.test(body.txHash)) {
+      throw new Error('txHash must be a valid 32-byte transaction hash when provided.');
+    }
+    txHash = body.txHash as `0x${string}`;
+  }
+
   return {
     userAddress: normalizeAddress(body.userAddress, 'userAddress'),
     recipeType: parseRecipeType(body.recipeType),
     status: parseRecipeStatus(body.status),
+    txHash,
   };
 }
 
@@ -345,6 +364,14 @@ export async function updateRecipeStatus(
 
   const updated = await recipesRepository.updateStatus(existingRecipe.id, payload.status);
 
+  if (payload.txHash) {
+    await recipesRepository.updateParametersJson(existingRecipe.id, {
+      ...updated.parametersJson,
+      delegationTxHash: payload.txHash,
+      delegationUpdatedAt: new Date().toISOString(),
+    });
+  }
+
   console.log(
     `[Keeper API] Status updated ${recipeLogContext({
       userAddress: updated.userAddress,
@@ -437,6 +464,62 @@ export async function listExecutionLogs(
         errorMessage: log.errorMessage,
       };
     }),
+  };
+}
+
+function parseListRecipesPayload(rawQuery: unknown): {
+  userAddress?: string;
+  limit: number;
+} {
+  if (!isRecord(rawQuery)) {
+    return { limit: 100 };
+  }
+
+  const query = rawQuery as ListRecipesPayload;
+  const parsedLimit = Number(query.limit ?? 100);
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(200, Math.floor(parsedLimit)))
+    : 100;
+
+  const userAddress = query.userAddress !== undefined
+    ? normalizeAddress(query.userAddress, 'userAddress')
+    : undefined;
+
+  return {
+    userAddress,
+    limit,
+  };
+}
+
+export async function listActiveRecipes(rawQuery: unknown): Promise<Record<string, unknown>> {
+  const payload = parseListRecipesPayload(rawQuery);
+  const recipes = await recipesRepository.listLatestByUserAndType({
+    userAddress: payload.userAddress,
+    limit: payload.limit,
+  });
+
+  return {
+    success: true,
+    recipes: recipes.map((recipe) => ({
+      delegationTxHash:
+        typeof recipe.parametersJson.delegationTxHash === 'string'
+          ? recipe.parametersJson.delegationTxHash
+          : null,
+      delegationValidUntil:
+        typeof recipe.parametersJson.delegationValidUntil === 'string'
+          ? recipe.parametersJson.delegationValidUntil
+          : null,
+      id: recipe.id,
+      userAddress: recipe.userAddress,
+      recipeType: recipe.recipeType,
+      status: recipe.status,
+      targetProtocol: recipe.targetProtocol,
+      swapProvider: recipe.swapProvider,
+      parametersJson: recipe.parametersJson,
+      createdAt: recipe.createdAt.toISOString(),
+      updatedAt: recipe.updatedAt.toISOString(),
+      lastExecutedAt: recipe.lastExecutedAt ? recipe.lastExecutedAt.toISOString() : null,
+    })),
   };
 }
 
@@ -562,18 +645,34 @@ function getDcaAllowanceSpenderCandidates(
   ).sort() as `0x${string}`[];
 }
 
+function getDcaAlwaysStrictDecodedSpenders(
+  callData: `0x${string}`,
+  userAddress: `0x${string}`
+): `0x${string}`[] {
+  const normalizedUserAddress = userAddress.toLowerCase();
+  return getDcaDecodedSpenderCandidates(callData).filter((candidate) => {
+    const normalized = candidate.toLowerCase();
+    return normalized !== normalizedUserAddress && DCA_ALWAYS_STRICT_SPENDERS.has(normalized);
+  });
+}
+
 function getDcaStrictRequiredSpenders(
   callData: `0x${string}`,
   targetProtocol: `0x${string}`,
-  routeSpenderAddress: `0x${string}` | undefined
+  routeSpenderAddress: `0x${string}` | undefined,
+  userAddress: `0x${string}`
 ): `0x${string}`[] {
   const selector = extractSelectorFromCallData(callData).toLowerCase();
+  const strictDecodedSpenders = getDcaAlwaysStrictDecodedSpenders(callData, userAddress);
   if (selector === DCA_SWAP_SELECTOR) {
-    return normalizeDcaSpenderCandidates([CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`]);
+    return normalizeDcaSpenderCandidates([
+      CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
+      ...strictDecodedSpenders,
+    ]);
   }
 
   const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
-  return normalizeDcaSpenderCandidates([runtimeSpender]);
+  return normalizeDcaSpenderCandidates([runtimeSpender, ...strictDecodedSpenders]);
 }
 
 function parseDcaAllowancePrecheckPayload(rawBody: unknown): {
@@ -634,7 +733,8 @@ export async function precheckDcaAllowance(
   const strictRequiredSpenders = getDcaStrictRequiredSpenders(
     routePlan.callData,
     routePlan.targetProtocolAddress,
-    routePlan.spenderAddress
+    routePlan.spenderAddress,
+    payload.userAddress
   );
 
   const allowanceBySpender: Record<string, string> = {};

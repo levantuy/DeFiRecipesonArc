@@ -1,7 +1,6 @@
 export const RecipeType = {
   AUTO_COMPOUNDER: 'AUTO_COMPOUNDER',
   RECURRING_DCA: 'RECURRING_DCA',
-  SMART_YIELD_REBALANCER: 'SMART_YIELD_REBALANCER',
   SAFETY_NET: 'SAFETY_NET',
   SAVINGS_STREAM: 'SAVINGS_STREAM',
 } as const;
@@ -18,6 +17,7 @@ export const RecipeStatus = {
 export type RecipeStatus = (typeof RecipeStatus)[keyof typeof RecipeStatus];
 
 export const SwapProvider = {
+  ARC_LIFI_SWAP: 'ARC_LIFI_SWAP',
   ARC_APP_KIT_SWAP: 'ARC_APP_KIT_SWAP',
 } as const;
 

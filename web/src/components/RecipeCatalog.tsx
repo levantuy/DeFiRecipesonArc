@@ -42,22 +42,6 @@ export const RECIPES: (RecipeConfig & { description: string; risk: string; apy: 
     apy: 'DCA Strategy',
     defaultIntervalHours: 24,
   },
-  {
-    id: 'recipe-smart-rebalancer',
-    recipeType: 'SMART_YIELD_REBALANCER',
-    name: 'USDC Smart Yield Rebalancer',
-    description: 'Dynamic yield optimization. Automatically rebalances capital between Arc Lending and Treasury Vaults when APY delta exceeds 1.5%.',
-    targetProtocol: 'Arc Lending & Treasury Vaults',
-    targetProtocolAddress: '0x0000000000000000000000000000000000001003',
-    maxSlippageBps: 50,
-    estimatedGasUsdc: '0.0032',
-    expectedNetApy: 'Dynamic',
-    riskWarning: 'Frequent APY swings can increase execution frequency and gas usage.',
-    routeSteps: ['Compare Arc Lending APY vs Treasury APY', 'Withdraw from lower-yield venue', 'Deposit into higher-yield venue'],
-    risk: 'Medium Risk',
-    apy: 'Dynamic APY',
-    defaultIntervalHours: 6,
-  },
 ];
 
 interface RecipeCatalogProps {
@@ -77,7 +61,7 @@ export const RecipeCatalog: React.FC<RecipeCatalogProps> = ({ onSelectRecipe }) 
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {RECIPES.map((recipe, index) => (
           <motion.div
             key={recipe.id}

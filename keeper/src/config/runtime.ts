@@ -14,6 +14,7 @@ export interface RuntimeConfig {
   keeperTxConfirmMaxAttempts: number;
   keeperTxConfirmRetryDelayMs: number;
   keeperSyncConfirmationInHotPath: boolean;
+  keeperUseRedisQueue: boolean;
   enableUnifiedBalance: boolean;
   enableGatewayForwarder: boolean;
   circleClientKey: string;
@@ -23,6 +24,13 @@ export interface RuntimeConfig {
   redisUrl: string;
   redisRetryMaxDelayMs: number;
   allowAppKitDcaGuardrailBypass: boolean;
+  keeperApiRequireAuth: boolean;
+  keeperApiAuthToken: string;
+  keeperApiRateLimitWindowMs: number;
+  keeperApiRateLimitMaxRequests: number;
+  keeperCorsAllowedOrigins: string[];
+  keeperInternalOnlyEnforced: boolean;
+  keeperInternalOnlyPaths: string[];
 }
 
 function parseBooleanEnv(key: string, fallback: boolean): boolean {
@@ -89,6 +97,18 @@ function parseUrlListEnv(key: string, fallback: string[]): string[] {
   return Array.from(new Set(normalized));
 }
 
+function parseStringListEnv(key: string, fallback: string[]): string[] {
+  const raw = process.env[key];
+  const values = raw
+    ? raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+    : fallback;
+
+  return Array.from(new Set(values));
+}
+
 export function isValidPrivateKey(value: string): value is `0x${string}` {
   return /^0x[a-fA-F0-9]{64}$/.test(value);
 }
@@ -116,6 +136,7 @@ export const RUNTIME_CONFIG: RuntimeConfig = {
   keeperTxConfirmMaxAttempts: parseIntegerEnv('KEEPER_TX_CONFIRM_MAX_ATTEMPTS', 8, 1, 20),
   keeperTxConfirmRetryDelayMs: parseIntegerEnv('KEEPER_TX_CONFIRM_RETRY_DELAY_MS', 4_000, 500, 60_000),
   keeperSyncConfirmationInHotPath: parseBooleanEnv('KEEPER_SYNC_CONFIRMATION_IN_HOT_PATH', false),
+  keeperUseRedisQueue: parseBooleanEnv('KEEPER_USE_REDIS_QUEUE', true),
   enableUnifiedBalance: parseBooleanEnv('ENABLE_UNIFIED_BALANCE', false),
   enableGatewayForwarder: parseBooleanEnv('ENABLE_GATEWAY_FORWARDER', false),
   circleClientKey: process.env.CIRCLE_CLIENT_KEY || '',
@@ -125,4 +146,18 @@ export const RUNTIME_CONFIG: RuntimeConfig = {
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   redisRetryMaxDelayMs: parseIntegerEnv('REDIS_RETRY_MAX_DELAY_MS', 10_000, 250, 120_000),
   allowAppKitDcaGuardrailBypass: parseBooleanEnv('APP_KIT_DCA_GUARDRAIL_BYPASS', false),
+  keeperApiRequireAuth: parseBooleanEnv('KEEPER_API_REQUIRE_AUTH', process.env.NODE_ENV === 'production'),
+  keeperApiAuthToken: process.env.KEEPER_API_AUTH_TOKEN || '',
+  keeperApiRateLimitWindowMs: parseIntegerEnv('KEEPER_API_RATE_LIMIT_WINDOW_MS', 60_000, 1_000, 3_600_000),
+  keeperApiRateLimitMaxRequests: parseIntegerEnv('KEEPER_API_RATE_LIMIT_MAX_REQUESTS', 120, 1, 100_000),
+  keeperCorsAllowedOrigins: parseStringListEnv('KEEPER_CORS_ALLOWED_ORIGINS', [
+    'http://localhost:3000',
+    'http://localhost:3001',
+  ]),
+  keeperInternalOnlyEnforced: parseBooleanEnv('KEEPER_INTERNAL_ONLY_ENFORCED', process.env.NODE_ENV === 'production'),
+  keeperInternalOnlyPaths: parseStringListEnv('KEEPER_INTERNAL_ONLY_PATHS', ['/healthz', '/metrics']),
 };
+
+if (RUNTIME_CONFIG.keeperApiRequireAuth && RUNTIME_CONFIG.keeperApiAuthToken.trim().length === 0) {
+  throw new Error('[Config Error] KEEPER_API_AUTH_TOKEN must be set when KEEPER_API_REQUIRE_AUTH=true.');
+}

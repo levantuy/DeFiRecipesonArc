@@ -102,7 +102,7 @@ async function maybeActivateFirstWorkingRoute({ baseUrl, userAddress, totalBudge
   const payload = {
     userAddress,
     recipeType: 'RECURRING_DCA',
-    swapProvider: 'ARC_APP_KIT_SWAP',
+    swapProvider: 'ARC_LIFI_SWAP',
     parametersJson: {
       totalBudgetUsdc,
       perExecutionAmountUsdc: firstWorking.perExecutionAmountUsdc,

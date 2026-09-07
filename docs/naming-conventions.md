@@ -69,8 +69,8 @@ contract SharedExecutorProxy is ISharedExecutor {
 ```typescript
 export enum RecipeType {
   AUTO_COMPOUND = 'AUTO_COMPOUND',
-  YIELD_REBALANCER = 'YIELD_REBALANCER',
-  DCA_VAULT = 'DCA_VAULT',
+  RECURRING_DCA = 'RECURRING_DCA',
+  SAFETY_NET = 'SAFETY_NET',
 }
 ```
 

@@ -14,6 +14,21 @@ interface ActiveRecipeItem {
   maxUsdcSpendLimit: string;
   status: string;
   createdAt: string;
+  delegationTxHash?: string | null;
+  delegationValidUntil?: string | null;
+}
+
+interface KeeperRecipeItem {
+  id?: string;
+  userAddress?: string;
+  recipeType?: string;
+  status?: string;
+  targetProtocol?: string | null;
+  swapProvider?: string | null;
+  parametersJson?: Record<string, unknown>;
+  delegationTxHash?: string | null;
+  delegationValidUntil?: string | null;
+  createdAt?: string;
 }
 
 interface CreateRecipePayload {
@@ -27,11 +42,8 @@ interface CreateRecipePayload {
   maxSlippageBps?: number;
   maxUsdcSpendLimit?: string;
   status?: string;
+  txHash?: string;
   parametersJson?: Record<string, unknown>;
-}
-
-interface KeeperRuntimeConfigApiPayload {
-  action?: string;
 }
 
 const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
@@ -46,12 +58,22 @@ function getKeeperApiBaseUrl() {
   return (configured || DEFAULT_KEEPER_API_BASE_URL).trim().replace(/\/$/, '');
 }
 
+function getKeeperApiAuthToken(): string {
+  return (process.env.KEEPER_API_AUTH_TOKEN || process.env.KEEPER_SYNC_AUTH_TOKEN || '').trim();
+}
+
 async function postToKeeper(path: string, payload: Record<string, unknown>) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const authToken = getKeeperApiAuthToken();
+  if (authToken.length > 0) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(`${getKeeperApiBaseUrl()}${path}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(payload),
     cache: 'no-store',
   });
@@ -135,13 +157,100 @@ const inMemoryRecipes: ActiveRecipeItem[] = [
   },
 ];
 
-export async function GET() {
-  return NextResponse.json({ success: true, recipes: inMemoryRecipes });
+function mapKeeperRecipeToActiveItem(recipe: KeeperRecipeItem): ActiveRecipeItem {
+  const parametersJson = recipe.parametersJson || {};
+  const maxSlippageBps =
+    typeof parametersJson.maxSlippageBps === 'number' && Number.isInteger(parametersJson.maxSlippageBps)
+      ? parametersJson.maxSlippageBps
+      : DEFAULT_DCA_MAX_SLIPPAGE_BPS;
+
+  return {
+    id: typeof recipe.id === 'string' && recipe.id.length > 0 ? recipe.id : `recipe-${Date.now()}`,
+    userAddress: typeof recipe.userAddress === 'string' ? recipe.userAddress : '0xUserAddress',
+    recipeType: typeof recipe.recipeType === 'string' ? recipe.recipeType : 'AUTO_COMPOUNDER',
+    recipeName:
+      typeof recipe.recipeType === 'string'
+        ? recipe.recipeType.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (char) => char.toUpperCase())
+        : 'Custom Recipe',
+    targetProtocol:
+      (typeof recipe.targetProtocol === 'string' && recipe.targetProtocol.length > 0
+        ? recipe.targetProtocol
+        : typeof recipe.swapProvider === 'string' && recipe.swapProvider.length > 0
+          ? recipe.swapProvider
+          : 'Arc Protocol'),
+    maxSlippageBps,
+    maxUsdcSpendLimit:
+      typeof parametersJson.maxUsdcSpendLimit === 'string' && parametersJson.maxUsdcSpendLimit.length > 0
+        ? parametersJson.maxUsdcSpendLimit
+        : '500',
+    status: typeof recipe.status === 'string' ? recipe.status : 'ACTIVE',
+    createdAt:
+      typeof recipe.createdAt === 'string' && recipe.createdAt.length > 0
+        ? recipe.createdAt
+        : new Date().toISOString(),
+    delegationTxHash:
+      typeof recipe.delegationTxHash === 'string'
+        ? recipe.delegationTxHash
+        : typeof parametersJson.delegationTxHash === 'string'
+          ? parametersJson.delegationTxHash
+          : null,
+    delegationValidUntil:
+      typeof recipe.delegationValidUntil === 'string'
+        ? recipe.delegationValidUntil
+        : typeof parametersJson.delegationValidUntil === 'string'
+          ? parametersJson.delegationValidUntil
+          : null,
+  };
+}
+
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url);
+  const userAddress = requestUrl.searchParams.get('userAddress')?.trim() || '';
+  const limit = requestUrl.searchParams.get('limit')?.trim() || '100';
+
+  try {
+    const keeperUrl = new URL(`${getKeeperApiBaseUrl()}/recipes`);
+    keeperUrl.searchParams.set('limit', limit);
+    if (userAddress.length > 0) {
+      keeperUrl.searchParams.set('userAddress', userAddress);
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const authToken = getKeeperApiAuthToken();
+    if (authToken.length > 0) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+
+    const response = await fetch(keeperUrl.toString(), {
+      method: 'GET',
+      headers,
+      cache: 'no-store',
+    });
+
+    const data = (await response.json().catch(() => null)) as
+      | { success?: boolean; recipes?: KeeperRecipeItem[]; error?: string }
+      | null;
+
+    if (!response.ok || !data?.success || !Array.isArray(data.recipes)) {
+      const errorMessage = data?.error || `Failed to fetch persisted recipes from keeper (${response.status}).`;
+      console.warn(`[Web API] ${errorMessage} Falling back to in-memory recipes.`);
+      return NextResponse.json({ success: true, dataSource: 'memory-fallback', recipes: inMemoryRecipes });
+    }
+
+    const mappedRecipes = data.recipes.map(mapKeeperRecipeToActiveItem);
+    return NextResponse.json({ success: true, dataSource: 'keeper-db', recipes: mappedRecipes });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown recipes fetch error';
+    console.warn(`[Web API] ${message}. Falling back to in-memory recipes.`);
+    return NextResponse.json({ success: true, dataSource: 'memory-fallback', recipes: inMemoryRecipes });
+  }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as CreateRecipePayload | KeeperRuntimeConfigApiPayload;
+    const body = (await request.json()) as CreateRecipePayload;
 
     if (body.action === 'keeperRuntimeConfig') {
       const healthResponse = await fetch(`${getKeeperApiBaseUrl()}/healthz`, {
@@ -262,6 +371,10 @@ export async function POST(request: Request) {
         requestParameters.dcaAmountUsdc = perExecutionAmountUsdc;
       }
 
+      if (typeof body.txHash === 'string' && /^0x[a-fA-F0-9]{64}$/.test(body.txHash)) {
+        requestParameters.delegationTxHash = body.txHash;
+      }
+
       const keeperPayload: Record<string, unknown> = {
         userAddress: body.userAddress,
         recipeType: body.recipeType,
@@ -288,6 +401,10 @@ export async function POST(request: Request) {
         maxUsdcSpendLimit: body.maxUsdcSpendLimit || '1000',
         status: 'ACTIVE',
         createdAt: new Date().toISOString(),
+        delegationTxHash:
+          typeof requestParameters.delegationTxHash === 'string' ? requestParameters.delegationTxHash : null,
+        delegationValidUntil:
+          typeof requestParameters.delegationValidUntil === 'string' ? requestParameters.delegationValidUntil : null,
       };
       inMemoryRecipes.unshift(newRecipe);
 
@@ -306,6 +423,7 @@ export async function POST(request: Request) {
         userAddress: body.userAddress,
         recipeType: body.recipeType,
         status: body.status,
+        txHash: typeof body.txHash === 'string' && /^0x[a-fA-F0-9]{64}$/.test(body.txHash) ? body.txHash : undefined,
       });
 
       for (const recipe of inMemoryRecipes) {

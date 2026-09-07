@@ -4,7 +4,6 @@ import { encodeFunctionData, parseAbi, Address, Hex } from 'viem';
 const LENDING_ABI = parseAbi([
   'function deposit(uint256 amount)',
   'function withdraw(uint256 amount)',
-  'function withdrawForUser(address user, uint256 amount)',
   'function claimRewards()',
   'function claimRewardsForUser(address user)',
 ]);
@@ -42,13 +41,3 @@ export function buildDcaCallData(
   });
 }
 
-/**
- * Builds function callData for Recipe 3 - USDC Smart Yield Rebalancer (Withdraw from Low Yield Protocol).
- */
-export function buildRebalancerCallData(userAddress: Address, usdcAmount: bigint): Hex {
-  return encodeFunctionData({
-    abi: LENDING_ABI,
-    functionName: 'withdrawForUser',
-    args: [userAddress, usdcAmount],
-  });
-}

@@ -10,7 +10,7 @@ import {
   parseUsdcAmountToBaseUnits,
 } from '@/lib/dcaConfig';
 
-export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA' | 'SMART_YIELD_REBALANCER';
+export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA';
 export type SwapProvider = 'ARC_APP_KIT_SWAP';
 
 export interface RecipeConfig {
@@ -467,6 +467,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       totalDcaBudgetUsdc: string;
                       perExecutionUsdc: string;
                       executionMode: DcaExecutionMode;
+                      runtimeSpender?: `0x${string}`;
+                      requiredSpenders?: `0x${string}`[];
                     };
                   } = {
                     maxSlippageBps: clampedSlippage,

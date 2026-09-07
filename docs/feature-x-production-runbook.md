@@ -1,7 +1,11 @@
 # Feature X Production Runbook
 
 ## Scope
-Feature X in this release covers recipe delegation lifecycle:
+Feature X in this release covers recipe delegation lifecycle for:
+- USDC Yield Auto-Compounder
+- USDC -> EURC Recurring DCA
+
+Operational flow scope:
 - Pre-flight simulation
 - Activate delegation
 - Pause / resume delegation

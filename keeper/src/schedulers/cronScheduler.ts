@@ -1,11 +1,14 @@
 import { JsonObject, RecipeStatus, RecipeType } from '../db/types';
 import { createPublicClient, decodeFunctionData, http } from 'viem';
 import { arcTestnet } from 'viem/chains';
-import { recipeQueue, RecipeExecutionJobData } from './queueScheduler';
+import {
+  dispatchRecipeExecutionJob,
+  RecipeExecutionJobData,
+  redisConnection,
+} from './queueScheduler';
 import { publicClient, simulateRecipeStep } from '../simulation/staticSimulationEngine';
 import {
   buildAutoCompounderCallData,
-  buildRebalancerCallData,
 } from '../simulation/recipePayloads';
 import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
 import {
@@ -64,6 +67,8 @@ const claimableRewardsCache = new Map<string, { amount: bigint; checkedAtMs: num
 const USDC_ALLOWANCE_CACHE_TTL_MS = 30 * 1000;
 const usdcAllowanceCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
 const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
+const QUEUE_ENQUEUE_RETRY_ATTEMPTS = 2;
+const QUEUE_ENQUEUE_RETRY_DELAY_MS = 750;
 
 const AUTO_COMPOUNDER_REWARDS_ABI = [
   {
@@ -101,10 +106,12 @@ const ERC20_BALANCE_OF_ABI = [
 const RECIPE_SELECTOR_LABEL: Partial<Record<RecipeType, string>> = {
   AUTO_COMPOUNDER: 'claimRewardsForUser(address)',
   RECURRING_DCA: 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
-  SMART_YIELD_REBALANCER: 'withdrawForUser(address,uint256)',
 };
 
 const DCA_SWAP_SELECTOR = '0x7ebc46f0';
+const DCA_ALWAYS_STRICT_SPENDERS = new Set<string>([
+  '0x00000000000000000000000000000000000000c0',
+]);
 const DCA_SWAP_ABI = [
   {
     type: 'function',
@@ -127,6 +134,76 @@ interface RecipeParameters {
   targetAssetSymbol?: string;
 }
 
+
+function isQueueConnectionClosedError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return (
+    normalized.includes('connection is closed') ||
+    normalized.includes('connection closed') ||
+    normalized.includes('redis is already connecting') ||
+    normalized.includes('socket hang up') ||
+    normalized.includes('econnreset')
+  );
+}
+
+async function ensureQueueRedisConnection(context: string): Promise<void> {
+  if (!redisConnection) {
+    return;
+  }
+
+  const status = redisConnection.status;
+  if (status === 'ready' || status === 'connecting' || status === 'connect') {
+    return;
+  }
+
+  try {
+    await redisConnection.connect();
+    console.warn(
+      `[Cron Scheduler Notice] Reconnected Redis for queue operations statusBefore=${status} ${context}`
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[Cron Scheduler Notice] Redis reconnect attempt failed statusBefore=${status} ${context}: ${message}`
+    );
+  }
+}
+
+async function enqueueRecipeExecutionJobWithRetry(
+  jobId: string,
+  jobData: RecipeExecutionJobData,
+  context: string
+): Promise<void> {
+  if (!RUNTIME_CONFIG.keeperUseRedisQueue) {
+    await dispatchRecipeExecutionJob(jobId, jobData);
+    return;
+  }
+
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= QUEUE_ENQUEUE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      await dispatchRecipeExecutionJob(jobId, jobData);
+      return;
+    } catch (error: unknown) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isQueueConnectionClosedError(message) || attempt >= QUEUE_ENQUEUE_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      console.warn(
+        `[Cron Scheduler Notice] Queue enqueue retry ${attempt}/${QUEUE_ENQUEUE_RETRY_ATTEMPTS} ${context}: ${message}`
+      );
+      await ensureQueueRedisConnection(context);
+      await new Promise((resolve) => setTimeout(resolve, QUEUE_ENQUEUE_RETRY_DELAY_MS));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Queue enqueue failed due to unknown Redis connection error.');
+}
 function recipeLogContext(recipe: { id: string; userAddress: string; recipeType: RecipeType }): string {
   return `[recipeId=${recipe.id} userAddress=${recipe.userAddress} recipeType=${recipe.recipeType}]`;
 }
@@ -335,11 +412,13 @@ function isBalanceExceededError(errorMessage: string): boolean {
   return normalized.includes('transfer amount exceeds balance');
 }
 
-function isArcAppKitNoRouteError(errorMessage: string): boolean {
+function isDcaNoRouteError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return (
     normalized.includes('no route available') ||
-    normalized.includes('"code":331001')
+    normalized.includes('"code":331001') ||
+    normalized.includes('no quote') ||
+    normalized.includes('route not found')
   );
 }
 
@@ -423,7 +502,7 @@ function resolveDcaAllowanceSpenderAddress(
     return routeSpenderAddress;
   }
 
-  // App Kit sometimes omits allowanceTarget/spender in response payload.
+  // Some route providers omit allowanceTarget/spender in response payload.
   // For the known DCA selector shape, try the calldata-derived spender addresses in order.
   if (extractSelectorFromCallData(callData).toLowerCase() === DCA_SWAP_SELECTOR) {
     const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
@@ -451,18 +530,34 @@ function getDcaAllowanceSpenderCandidates(
   ).sort() as `0x${string}`[];
 }
 
+function getDcaAlwaysStrictDecodedSpenders(
+  callData: `0x${string}`,
+  userAddress: `0x${string}`
+): `0x${string}`[] {
+  const normalizedUserAddress = userAddress.toLowerCase();
+  return getDcaDecodedSpenderCandidates(callData).filter((candidate) => {
+    const normalized = candidate.toLowerCase();
+    return normalized !== normalizedUserAddress && DCA_ALWAYS_STRICT_SPENDERS.has(normalized);
+  });
+}
+
 function getDcaStrictRequiredSpenders(
   callData: `0x${string}`,
   targetProtocol: `0x${string}`,
-  routeSpenderAddress: `0x${string}` | null
+  routeSpenderAddress: `0x${string}` | null,
+  userAddress: `0x${string}`
 ): `0x${string}`[] {
   const selector = extractSelectorFromCallData(callData).toLowerCase();
+  const strictDecodedSpenders = getDcaAlwaysStrictDecodedSpenders(callData, userAddress);
   if (selector === DCA_SWAP_SELECTOR) {
-    return normalizeDcaSpenderCandidates([CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`]);
+    return normalizeDcaSpenderCandidates([
+      CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
+      ...strictDecodedSpenders,
+    ]);
   }
 
   const runtimeSpender = resolveDcaAllowanceSpenderAddress(callData, targetProtocol, routeSpenderAddress);
-  return normalizeDcaSpenderCandidates([runtimeSpender]);
+  return normalizeDcaSpenderCandidates([runtimeSpender, ...strictDecodedSpenders]);
 }
 
 function maybeLogSelectorNotAllowedHint(
@@ -970,10 +1065,14 @@ export async function pollAndTriggerActiveRecipes() {
             }
           }
 
-          if (recipe.swapProvider && recipe.swapProvider !== 'ARC_APP_KIT_SWAP') {
+          if (
+            recipe.swapProvider &&
+            recipe.swapProvider !== 'ARC_LIFI_SWAP' &&
+            recipe.swapProvider !== 'ARC_APP_KIT_SWAP'
+          ) {
             console.warn(
               `[Cron Scheduler Warning] Unsupported swapProvider=${recipe.swapProvider} ${context}. ` +
-              `Proceeding with App Kit route resolution only.`
+              `Proceeding with runtime DCA route provider only.`
             );
           }
 
@@ -991,12 +1090,12 @@ export async function pollAndTriggerActiveRecipes() {
           } catch (routeError: unknown) {
             const routeErrorMessage = routeError instanceof Error ? routeError.message : String(routeError);
 
-            if (!isArcAppKitNoRouteError(routeErrorMessage)) {
+            if (!isDcaNoRouteError(routeErrorMessage)) {
               throw routeError;
             }
 
             console.warn(
-              `[Cron Scheduler Action Required] App Kit has no swap route ${context}. ` +
+              `[Cron Scheduler Action Required] DCA route provider has no swap route ${context}. ` +
               `Reduce dcaAmountUsdc, relax maxSlippageBps, or choose another targetAssetSymbol.`
             );
             continue;
@@ -1017,9 +1116,6 @@ export async function pollAndTriggerActiveRecipes() {
               continue;
             }
           }
-        } else if (recipe.recipeType === RecipeType.SMART_YIELD_REBALANCER) {
-          callData = buildRebalancerCallData(recipe.userAddress as `0x${string}`, 100000000n);
-          minAmountOut = '100000000';
         }
 
         if (!targetProtocol) {
@@ -1066,7 +1162,8 @@ export async function pollAndTriggerActiveRecipes() {
           const strictRequiredSpenders = getDcaStrictRequiredSpenders(
             callData,
             targetProtocol as `0x${string}`,
-            routeSpenderAddress
+            routeSpenderAddress,
+            recipe.userAddress as `0x${string}`
           );
           const selectorHex = extractSelectorFromCallData(callData);
           const runtimeSpender = resolveDcaAllowanceSpenderAddress(
@@ -1333,9 +1430,14 @@ export async function pollAndTriggerActiveRecipes() {
 
         const executionBucket = Math.floor(now.getTime() / (intervalHours * 60 * 60 * 1000));
         const jobId = `execute-${recipe.id}-${executionBucket}`;
-        await recipeQueue.add(jobId, jobData, { jobId });
-        incrementCounter('queue.enqueued');
-        console.log(`[Cron Scheduler] Enqueued recipe ${context} jobId=${jobId}`);
+        await enqueueRecipeExecutionJobWithRetry(jobId, jobData, context);
+
+        if (RUNTIME_CONFIG.keeperUseRedisQueue) {
+          incrementCounter('queue.enqueued');
+          console.log(`[Cron Scheduler] Enqueued recipe ${context} jobId=${jobId}`);
+        } else {
+          console.log(`[Cron Scheduler] Executed recipe directly (Redis queue disabled) ${context} jobId=${jobId}`);
+        }
       } catch (recipeErr: unknown) {
         const recipeErrorMessage = recipeErr instanceof Error ? recipeErr.message : 'Unknown recipe scheduling error';
         console.warn(`[Cron Scheduler Notice] Skipping recipe ${recipeLogContext(recipe)}: ${recipeErrorMessage}`);

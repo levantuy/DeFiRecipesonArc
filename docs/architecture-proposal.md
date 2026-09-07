@@ -38,7 +38,7 @@ graph TD
 
     subgraph KeeperLayer ["3. Off-Chain Keeper Automation Engine"]
         SCHEDULER["BullMQ + Redis Job Scheduler"]
-        MONITOR["APY & Event Listening Worker"]
+        MONITOR["DCA Route & Event Listening Worker"]
         SIM_ENGINE["Viem Static Simulation Engine (eth_call)"]
         RELAYER["Tx Submission & Relayer Engine"]
         DB[(PostgreSQL + Prisma)]
@@ -56,7 +56,6 @@ graph TD
         USDC_NATIVE["Native USDC Gas Engine"]
         LENDING["Arc Lending Protocol"]
         SWAP["Arc App Kit Swap Service"]
-        VAULTS["USDC Treasury Vaults"]
     end
 
     UI --> WALLET_SDK
@@ -76,11 +75,9 @@ graph TD
     SLIPPAGE --> PAUSE
     PAUSE --> LENDING
     PAUSE --> SWAP
-    PAUSE --> VAULTS
 
     LENDING --> ARC_CHAIN
     SWAP --> ARC_CHAIN
-    VAULTS --> ARC_CHAIN
     ARC_CHAIN --> USDC_NATIVE
 ```
 
@@ -131,7 +128,7 @@ function executeRecipeStep(
 
 ### 3.2. Off-Chain Keeper Automation Engine (Node.js / TypeScript + BullMQ + Viem v2)
 
-The Keeper Engine is responsible for automated strategy execution based on time-based triggers (cron) or market condition events (APY changes, health factor thresholds).
+The Keeper Engine is responsible for automated strategy execution based on time-based triggers (cron) and execution-state events for supported recipes.
 
 #### Core Engine Subsystems:
 1. **Scheduler Service (BullMQ + Redis)**:
@@ -139,7 +136,7 @@ The Keeper Engine is responsible for automated strategy execution based on time-
    * Leverages Redis for distributed job locking to prevent double-execution across worker instances.
 2. **Monitoring & Event Listening Worker**:
    * Subscribes to Arc RPC block logs via WebSocket.
-   * Computes real-time yield differences between Arc Lending pools and Treasury Vaults.
+    * Tracks route availability, execution status, and key protocol events required by Auto-Compounder and Recurring DCA.
 3. **Static Simulation Engine (`eth_call` via Viem v2)**:
    * **Mandatory Pre-Execution Simulation**: Before sending a live transaction, the keeper calls `publicClient.simulateContract()`.
    * If the simulation reverts or indicates excessive slippage, the transaction is immediately cancelled, logged to PostgreSQL, and an alert is raised without spending gas.

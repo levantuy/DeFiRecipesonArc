@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { RecipeCatalog, RECIPES } from '@/components/RecipeCatalog';
 import { DcaAllowancePrecheckResult, SimulationModal, RecipeConfig } from '@/components/SimulationModal';
@@ -55,6 +55,12 @@ interface DelegationSetupResult {
   submittedAtMs: number | null;
 }
 
+interface WalletReadyContext {
+  connectedAddress: `0x${string}`;
+  keeperSessionKeyAddress: `0x${string}`;
+  sessionKeyRegistryAddress: `0x${string}`;
+}
+
 interface FrontendPerformanceMetrics {
   timeToSubmittedMs: number[];
   timeToConfirmedMs: number[];
@@ -74,6 +80,25 @@ interface KeeperRuntimeConfigApiResponse {
     contracts?: Record<string, unknown> | null;
     timestamp?: string | null;
   };
+  error?: string;
+}
+
+interface PersistedActiveRecipeApiItem {
+  id?: string;
+  userAddress?: string;
+  recipeType?: string;
+  status?: string;
+  maxSlippageBps?: number;
+  maxUsdcSpendLimit?: string;
+  delegationTxHash?: string | null;
+  delegationValidUntil?: string | null;
+  createdAt?: string;
+}
+
+interface PersistedActiveRecipesApiResponse {
+  success?: boolean;
+  dataSource?: 'keeper-db' | 'memory-fallback';
+  recipes?: PersistedActiveRecipeApiItem[];
   error?: string;
 }
 
@@ -164,6 +189,19 @@ function getRetryDelayMs(attempt: number, baseDelayMs = TX_SEND_BASE_DELAY_MS): 
   return exponentialDelay + jitterMs;
 }
 
+function mapBackendStatusToLifecycleStatus(status: string | undefined): RecipeLifecycleStatus {
+  if (status === 'ACTIVE') {
+    return 'active';
+  }
+  if (status === 'PAUSED') {
+    return 'paused';
+  }
+  if (status === 'CANCELLED' || status === 'COMPLETED') {
+    return 'revoked';
+  }
+  return 'inactive';
+}
+
 async function syncKeeperRecipe(payload: Record<string, unknown>) {
   const response = await fetch('/api/recipes', {
     method: 'POST',
@@ -233,6 +271,9 @@ export default function Home() {
   const { writeContractAsync } = useWriteContract();
   const [runtimeKeeperSessionKeyAddress, setRuntimeKeeperSessionKeyAddress] = useState<`0x${string}` | null>(null);
   const [keeperAddressSyncWarning, setKeeperAddressSyncWarning] = useState<string>('');
+  const [runtimeSessionKeyRegistryAddress, setRuntimeSessionKeyRegistryAddress] = useState<`0x${string}` | null>(null);
+  const [sessionKeyRegistrySyncWarning, setSessionKeyRegistrySyncWarning] = useState<string>('');
+  const [delegationDataSource, setDelegationDataSource] = useState<'keeper-db' | 'memory-fallback' | 'unknown'>('unknown');
   const keeperSessionKeyAddressRaw = (process.env.NEXT_PUBLIC_KEEPER_SESSION_KEY_ADDRESS || '').trim();
   const keeperSessionKeyAddress = isAddress(keeperSessionKeyAddressRaw)
     ? keeperSessionKeyAddressRaw
@@ -285,6 +326,155 @@ export default function Home() {
     throw new Error(configErrorMessage);
   };
 
+  const resolveSessionKeyRegistryAddress = useCallback(async (): Promise<`0x${string}`> => {
+    if (!publicClient) {
+      throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+    }
+
+    let proxyResolvedRegistryAddress: `0x${string}` | null = null;
+    try {
+      const value = await publicClient.readContract({
+        address: CONTRACT_ADDRESSES.sharedExecutorProxy,
+        abi: SHARED_EXECUTOR_PROXY_ABI,
+        functionName: 'sessionKeyRegistry',
+      });
+
+      if (isAddress(value)) {
+        proxyResolvedRegistryAddress = value;
+      }
+    } catch {
+      // Fallback to configured address below.
+    }
+
+    const candidates = Array.from(
+      new Set(
+        [proxyResolvedRegistryAddress, CONTRACT_ADDRESSES.sessionKeyRegistry]
+          .filter((value): value is `0x${string}` => Boolean(value))
+          .map((value) => value.toLowerCase())
+      )
+    ) as `0x${string}`[];
+
+    for (const candidate of candidates) {
+      try {
+        const bytecode = await publicClient.getBytecode({ address: candidate });
+        if (bytecode && bytecode !== '0x') {
+          setRuntimeSessionKeyRegistryAddress(candidate);
+
+          if (
+            proxyResolvedRegistryAddress &&
+            proxyResolvedRegistryAddress.toLowerCase() !== CONTRACT_ADDRESSES.sessionKeyRegistry.toLowerCase()
+          ) {
+            setSessionKeyRegistrySyncWarning(
+              `web/.env NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS (${CONTRACT_ADDRESSES.sessionKeyRegistry}) ` +
+              `is out-of-sync with SharedExecutorProxy.sessionKeyRegistry() (${proxyResolvedRegistryAddress}). ` +
+              'Activation flow now uses proxy-resolved runtime address.'
+            );
+          } else {
+            setSessionKeyRegistrySyncWarning('');
+          }
+
+          return candidate;
+        }
+      } catch {
+        // Try next candidate.
+      }
+    }
+
+    throw new Error(
+      'Unable to resolve a valid SessionKeyRegistry contract address on Arc Testnet. ' +
+      'Verify NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS and SharedExecutorProxy deployment wiring.'
+    );
+  }, [publicClient]);
+
+  useEffect(() => {
+    if (!publicClient) {
+      return;
+    }
+
+    void resolveSessionKeyRegistryAddress().catch(() => {
+      // Keep lazy resolution path for action handlers and avoid noisy UI errors on first load.
+    });
+  }, [publicClient, resolveSessionKeyRegistryAddress]);
+
+  useEffect(() => {
+    if (!isConnected || !address || !isAddress(address)) {
+      setActiveRecipes({});
+      setDelegationDataSource('unknown');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadActiveRecipes = async () => {
+      try {
+        const url = new URL('/api/recipes', window.location.origin);
+        url.searchParams.set('userAddress', address);
+        url.searchParams.set('limit', '100');
+
+        const response = await fetch(url.toString(), {
+          method: 'GET',
+          cache: 'no-store',
+        });
+        const data = (await response.json().catch(() => null)) as PersistedActiveRecipesApiResponse | null;
+
+        if (!response.ok || !data?.success || !Array.isArray(data.recipes)) {
+          return;
+        }
+
+        if (!cancelled) {
+          setDelegationDataSource(data.dataSource || 'unknown');
+        }
+
+        const nextState: Record<string, ActiveRecipeState> = {};
+
+        for (const recipe of data.recipes) {
+          if (!recipe.recipeType) {
+            continue;
+          }
+
+          const recipeConfig = RECIPES.find((candidate) => candidate.recipeType === recipe.recipeType);
+          if (!recipeConfig) {
+            continue;
+          }
+
+          const lifecycleStatus = mapBackendStatusToLifecycleStatus(recipe.status);
+          if (lifecycleStatus === 'inactive') {
+            continue;
+          }
+
+          nextState[recipeConfig.id] = {
+            id: recipeConfig.id,
+            recipeType: recipeConfig.recipeType,
+            targetProtocolAddress: recipeConfig.targetProtocolAddress,
+            status: lifecycleStatus,
+            txLifecycleStatus: 'confirmed',
+            maxSlippageBps: typeof recipe.maxSlippageBps === 'number' ? recipe.maxSlippageBps : recipeConfig.maxSlippageBps,
+            maxUsdcSpendPerTx: `${recipe.maxUsdcSpendLimit || DEFAULT_MAX_USDC_SPEND_PER_TX} USDC`,
+            validUntil: recipe.delegationValidUntil || recipe.createdAt || new Date().toISOString(),
+            txHash: recipe.delegationTxHash && /^0x[a-fA-F0-9]{64}$/.test(recipe.delegationTxHash)
+              ? recipe.delegationTxHash as `0x${string}`
+              : null,
+          };
+        }
+
+        if (!cancelled) {
+          setActiveRecipes(nextState);
+        }
+      } catch {
+        if (!cancelled) {
+          setDelegationDataSource('unknown');
+        }
+        // Keep UI usable even when persistence source is temporarily unavailable.
+      }
+    };
+
+    void loadActiveRecipes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address]);
+
   const pushFrontendMetric = (field: keyof FrontendPerformanceMetrics, valueMs: number) => {
     setFrontendMetrics((previous) => {
       const nextSeries = [...previous[field], valueMs].slice(-50);
@@ -304,7 +494,7 @@ export default function Home() {
     return sorted[index];
   };
 
-  const ensureWalletReady = async () => {
+  const ensureWalletReady = async (): Promise<WalletReadyContext> => {
     if (!isConnected || !address) {
       throw new Error('Please connect a wallet before updating delegation.');
     }
@@ -324,19 +514,26 @@ export default function Home() {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
-    return { connectedAddress: address, keeperSessionKeyAddress: resolvedKeeperSessionKeyAddress };
+    const resolvedSessionKeyRegistryAddress = await resolveSessionKeyRegistryAddress();
+
+    return {
+      connectedAddress: address,
+      keeperSessionKeyAddress: resolvedKeeperSessionKeyAddress,
+      sessionKeyRegistryAddress: resolvedSessionKeyRegistryAddress,
+    };
   };
 
   const ensureSessionKeyDelegation = async (
     connectedAddress: `0x${string}`,
-    configuredKeeperSessionKeyAddress: `0x${string}`
+    configuredKeeperSessionKeyAddress: `0x${string}`,
+    sessionKeyRegistryAddress: `0x${string}`
   ): Promise<DelegationSetupResult> => {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
 
     const isAlreadyValid = await publicClient.readContract({
-      address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+      address: sessionKeyRegistryAddress,
       abi: SESSION_KEY_REGISTRY_ABI,
       functionName: 'isValidSessionKey',
       args: [connectedAddress, configuredKeeperSessionKeyAddress],
@@ -357,7 +554,7 @@ export default function Home() {
     const submittedAtMs = Date.now();
     const txHash = await sendContractWithRetry(
       {
-        address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+        address: sessionKeyRegistryAddress,
         abi: SESSION_KEY_REGISTRY_ABI,
         functionName: 'registerSessionKey',
         args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
@@ -592,7 +789,11 @@ export default function Home() {
 
     try {
       enforceActionCooldown();
-      const { connectedAddress, keeperSessionKeyAddress: configuredKeeperSessionKeyAddress } = await ensureWalletReady();
+      const {
+        connectedAddress,
+        keeperSessionKeyAddress: configuredKeeperSessionKeyAddress,
+        sessionKeyRegistryAddress,
+      } = await ensureWalletReady();
       const selectedRecipeSnapshot = selectedRecipe;
       const validUntil = new Date(Date.now() + DEFAULT_SESSION_VALIDITY_MS).toISOString();
 
@@ -674,7 +875,8 @@ export default function Home() {
 
       const delegationResult = await ensureSessionKeyDelegation(
         connectedAddress,
-        configuredKeeperSessionKeyAddress
+        configuredKeeperSessionKeyAddress,
+        sessionKeyRegistryAddress
       );
 
       const selectedRecipeDefinition = RECIPES.find((recipe) => recipe.id === selectedRecipeSnapshot.id);
@@ -685,6 +887,7 @@ export default function Home() {
         userAddress: connectedAddress,
         recipeType: selectedRecipeSnapshot.recipeType,
         recipeName: selectedRecipeSnapshot.name,
+        txHash: delegationResult.txHash,
         ...(selectedRecipeSnapshot.targetProtocolAddress
           ? { targetProtocolAddress: selectedRecipeSnapshot.targetProtocolAddress }
           : {}),
@@ -694,6 +897,7 @@ export default function Home() {
         maxSlippageBps,
         maxUsdcSpendLimit: DEFAULT_MAX_USDC_SPEND_PER_TX,
         parametersJson: {
+          delegationValidUntil: validUntil,
           checkIntervalHours,
           maxSlippageBps,
           ...(selectedRecipeSnapshot.recipeType === 'RECURRING_DCA' && normalizedDcaPayload
@@ -854,6 +1058,7 @@ export default function Home() {
           userAddress: connectedAddress,
           recipeType: currentRecipe.recipeType,
           status: willPause ? 'PAUSED' : 'ACTIVE',
+          txHash,
         });
       } catch (syncError: unknown) {
         keeperSyncWarning = ` Keeper sync warning: ${getErrorMessage(syncError)}`;
@@ -896,11 +1101,15 @@ export default function Home() {
     setIsUpdatingDelegation(true);
     try {
       enforceActionCooldown();
-      const { connectedAddress, keeperSessionKeyAddress: configuredKeeperSessionKeyAddress } = await ensureWalletReady();
+      const {
+        connectedAddress,
+        keeperSessionKeyAddress: configuredKeeperSessionKeyAddress,
+        sessionKeyRegistryAddress,
+      } = await ensureWalletReady();
       const submittedAtMs = Date.now();
       const txHash = await sendContractWithRetry(
         {
-          address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+          address: sessionKeyRegistryAddress,
           abi: SESSION_KEY_REGISTRY_ABI,
           functionName: 'revokeSessionKey',
           args: [configuredKeeperSessionKeyAddress],
@@ -936,6 +1145,7 @@ export default function Home() {
           userAddress: connectedAddress,
           recipeType: currentRecipe.recipeType,
           status: 'CANCELLED',
+          txHash,
         });
       } catch (syncError: unknown) {
         keeperSyncWarning = ` Keeper sync warning: ${getErrorMessage(syncError)}`;
@@ -1010,7 +1220,12 @@ export default function Home() {
         <section className="glass-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-white">Active Delegations</h2>
-            <span className="text-xs text-slate-400 font-mono">1-click pause/revoke</span>
+            <div className="text-right space-y-1">
+              <span className="block text-xs text-slate-400 font-mono">1-click pause/revoke</span>
+              <span className="block text-[11px] font-mono text-slate-500">
+                Data source: {delegationDataSource === 'keeper-db' ? 'Keeper DB' : delegationDataSource === 'memory-fallback' ? 'Memory Fallback' : 'Unknown'}
+              </span>
+            </div>
           </div>
 
           {configErrorMessage ? (
@@ -1022,6 +1237,33 @@ export default function Home() {
           {keeperAddressSyncWarning ? (
             <p className="text-sm text-amber-200 bg-amber-950/30 border border-amber-800/60 rounded-lg px-3 py-2">
               {keeperAddressSyncWarning}
+            </p>
+          ) : null}
+
+          <div className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 space-y-1">
+            <div className="uppercase tracking-wider text-[11px] text-slate-400">Runtime Contract Routing</div>
+            <div>
+              SessionKeyRegistry in use:{' '}
+              <a
+                href={`https://testnet.arcscan.app/address/${runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-blue-400 hover:underline break-all"
+              >
+                {runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}
+              </a>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Source:{' '}
+              {runtimeSessionKeyRegistryAddress
+                ? 'SharedExecutorProxy.sessionKeyRegistry() runtime resolution'
+                : 'web config fallback (runtime resolution pending)'}
+            </div>
+          </div>
+
+          {sessionKeyRegistrySyncWarning ? (
+            <p className="text-sm text-amber-200 bg-amber-950/30 border border-amber-800/60 rounded-lg px-3 py-2">
+              {sessionKeyRegistrySyncWarning}
             </p>
           ) : null}
 
@@ -1072,7 +1314,7 @@ export default function Home() {
                     ) : null}
                     {lifecycle && !lifecycle.txHash ? (
                       <div className="text-xs text-emerald-300">
-                        Delegation already existed. No new registration tx needed.
+                        Delegation restored without tx hash.
                       </div>
                     ) : null}
                   </div>

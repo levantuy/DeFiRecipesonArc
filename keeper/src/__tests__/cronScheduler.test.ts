@@ -35,9 +35,8 @@ vi.mock('../db/repositories/recipesRepository', () => ({
 }));
 
 vi.mock('../schedulers/queueScheduler', () => ({
-  recipeQueue: {
-    add: queueAddMock,
-  },
+  dispatchRecipeExecutionJob: queueAddMock,
+  redisConnection: null,
 }));
 
 vi.mock('../simulation/staticSimulationEngine', () => ({
@@ -91,6 +90,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
     waitForTransactionReceiptMock.mockResolvedValue({ status: 'success' });
     writeContractMock.mockResolvedValue('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     RUNTIME_CONFIG.allowAppKitDcaGuardrailBypass = false;
+    RUNTIME_CONFIG.keeperUseRedisQueue = true;
     dcaResolveRouteMock.mockResolvedValue({
       targetProtocolAddress: '0x5555555555555555555555555555555555555555',
       callData: '0x12345678',
@@ -226,7 +226,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
     expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 
-  it('skips DCA enqueue when App Kit reports no route available', async () => {
+  it('skips DCA enqueue when route provider reports no route available', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dcaResolveRouteMock.mockRejectedValueOnce(
       new Error('Arc App Kit swap service request failed: {"code":331001,"message":"No route available"}')
@@ -256,7 +256,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     const actionRequiredWarnings = warnSpy.mock.calls
       .flatMap((call) => call)
-      .filter((value) => typeof value === 'string' && value.includes('App Kit has no swap route'));
+      .filter((value) => typeof value === 'string' && value.includes('DCA route provider has no swap route'));
     expect(actionRequiredWarnings).toHaveLength(1);
 
     warnSpy.mockRestore();
@@ -770,6 +770,81 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     expect(advisoryWarnings).toHaveLength(1);
     expect(advisoryWarnings[0]).toContain('spender=0xc06ebbefd94032b85424d51906e2a335efae264b');
+
+    warnSpy.mockRestore();
+  });
+
+  it('skips simulation when decoded strict spender allowance is insufficient for App Kit DCA selector variant', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    dcaResolveRouteMock.mockResolvedValue({
+      targetProtocolAddress: '0xff70f4a1d11995621854f3692acf286d8acd04b2',
+      spenderAddress: '0xff70f4a1d11995621854f3692acf286d8acd04b2',
+      callData:
+        '0x5fd9ae2e' +
+        '0000000000000000000000000000000000000000000000000000000000000001' +
+        '00000000000000000000000000000000000000000000000000000000000000c0' +
+        '0000000000000000000000000000000000000000000000000000000000000002' +
+        '0000000000000000000000001111111111111111111111111111111111111111',
+      minSwapAssetOutBaseUnits: 4950000n,
+    });
+
+    readContractMock.mockImplementation(async (request: Record<string, unknown>) => {
+      const functionName = request.functionName as string;
+
+      if (functionName === 'balanceOf') {
+        return 5000000n;
+      }
+
+      if (functionName === 'allowance') {
+        const args = request.args as unknown[];
+        const spender = String(args[1] || '').toLowerCase();
+
+        if (spender === '0xff70f4a1d11995621854f3692acf286d8acd04b2') {
+          return 5000000n;
+        }
+
+        if (spender === '0x00000000000000000000000000000000000000c0') {
+          return 0n;
+        }
+
+        return 5000000n;
+      }
+
+      return true;
+    });
+
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-appkit-strict-spender-low-allowance',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        userAddress: '0x1111111111111111111111111111111111111111',
+        parametersJson: {
+          totalBudgetUsdc: '100',
+          perExecutionAmountUsdc: '5',
+          mode: 'PULL',
+          maxSlippageBps: 100,
+          targetAssetSymbol: 'EURC',
+        },
+      }),
+    ]);
+
+    await pollAndTriggerActiveRecipes();
+
+    expect(simulateRecipeStepMock).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+
+    const allowanceWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' &&
+          value.includes('DCA allowance is lower than configured spend')
+      ) as string[];
+
+    expect(allowanceWarnings).toHaveLength(1);
+    expect(allowanceWarnings[0]).toContain('spender=0x00000000000000000000000000000000000000c0');
 
     warnSpy.mockRestore();
   });
