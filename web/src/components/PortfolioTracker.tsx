@@ -39,12 +39,6 @@ type SortMode = 'NEWEST' | 'OLDEST' | 'STATUS';
 const VALID_STATUS_FILTERS: StatusFilter[] = ['ALL', 'CONFIRMED', 'SUBMITTED', 'REVERTED', 'SIMULATING', 'SIMULATION_FAILED'];
 const VALID_SORT_MODES: SortMode[] = ['NEWEST', 'OLDEST', 'STATUS'];
 
-const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
-
-function isAddress(value: string): value is `0x${string}` {
-  return ADDRESS_REGEX.test(value);
-}
-
 const RECIPE_NAME_BY_TYPE: Record<string, string> = {
   AUTO_COMPOUNDER: 'USDC Yield Auto-Compounder',
   RECURRING_DCA: 'USDC -> EURC Recurring DCA',
@@ -80,13 +74,6 @@ function formatAbsoluteTimestamp(isoTimestamp: string, locale: string): string {
     second: '2-digit',
     hour12: false,
   });
-}
-
-function shortenAddress(address: string): string {
-  if (!isAddress(address)) {
-    return address;
-  }
-  return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
 
 function splitUsdDisplay(value: number, fractionDigits: number, locale: string): { whole: string; fraction: string } {
@@ -133,34 +120,30 @@ const PortfolioTrackerContent: React.FC = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [logsError, setLogsError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
-  const [sortMode, setSortMode] = useState<SortMode>('NEWEST');
-  const [userAddressInput, setUserAddressInput] = useState('');
-  const [userAddressFilter, setUserAddressFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    const queryStatus = (safeSearchParams.get('status') || 'ALL').toUpperCase() as StatusFilter;
+    return VALID_STATUS_FILTERS.includes(queryStatus) ? queryStatus : 'ALL';
+  });
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    const querySort = (safeSearchParams.get('sort') || 'NEWEST').toUpperCase() as SortMode;
+    return VALID_SORT_MODES.includes(querySort) ? querySort : 'NEWEST';
+  });
 
   useEffect(() => {
-    const queryAddress = (safeSearchParams.get('userAddress') || '').trim().toLowerCase();
     const queryStatus = (safeSearchParams.get('status') || 'ALL').toUpperCase() as StatusFilter;
     const querySort = (safeSearchParams.get('sort') || 'NEWEST').toUpperCase() as SortMode;
 
     const nextStatus = VALID_STATUS_FILTERS.includes(queryStatus) ? queryStatus : 'ALL';
     const nextSort = VALID_SORT_MODES.includes(querySort) ? querySort : 'NEWEST';
-    const nextUserFilter = queryAddress && isAddress(queryAddress) ? queryAddress : '';
 
     setStatusFilter(nextStatus);
     setSortMode(nextSort);
-    setUserAddressInput(nextUserFilter);
-    setUserAddressFilter(nextUserFilter);
   }, [safeSearchParams]);
 
   useEffect(() => {
     const nextParams = new URLSearchParams(safeSearchParams.toString());
 
-    if (userAddressFilter) {
-      nextParams.set('userAddress', userAddressFilter);
-    } else {
-      nextParams.delete('userAddress');
-    }
+    nextParams.delete('userAddress');
 
     if (statusFilter !== 'ALL') {
       nextParams.set('status', statusFilter);
@@ -179,41 +162,23 @@ const PortfolioTrackerContent: React.FC = () => {
     if (nextQuery !== currentQuery) {
       router.replace(nextQuery ? `${safePathname}?${nextQuery}` : safePathname, { scroll: false });
     }
-  }, [router, safePathname, safeSearchParams, sortMode, statusFilter, userAddressFilter]);
-
-  useEffect(() => {
-    if (!address || userAddressInput || userAddressFilter) {
-      return;
-    }
-
-    const lower = address.toLowerCase();
-    setUserAddressInput(lower);
-    setUserAddressFilter(lower);
-  }, [address, userAddressFilter, userAddressInput]);
-
-  const userAddressValidationError = useMemo(() => {
-    const trimmed = userAddressInput.trim();
-    if (!trimmed) {
-      return null;
-    }
-    if (!isAddress(trimmed)) {
-      return t('invalidAddress');
-    }
-    return null;
-  }, [t, userAddressInput]);
-
-  const isAllUsersMode = !userAddressFilter;
+  }, [router, safePathname, safeSearchParams, sortMode, statusFilter]);
 
   useEffect(() => {
     let disposed = false;
 
     const fetchLogs = async () => {
+      if (!address) {
+        setAuditLogs([]);
+        setLogsError(null);
+        setIsLoadingLogs(false);
+        return;
+      }
+
       try {
         setIsLoadingLogs(true);
         const params = new URLSearchParams({ limit: '50' });
-        if (userAddressFilter) {
-          params.set('userAddress', userAddressFilter);
-        }
+        params.set('userAddress', address.toLowerCase());
 
         const response = await fetch(`/api/logs?${params.toString()}`, {
           method: 'GET',
@@ -264,7 +229,7 @@ const PortfolioTrackerContent: React.FC = () => {
       disposed = true;
       clearInterval(interval);
     };
-  }, [userAddressFilter]);
+  }, [address]);
 
   const visibleLogs = useMemo(() => {
     const filtered = statusFilter === 'ALL'
@@ -325,28 +290,6 @@ const PortfolioTrackerContent: React.FC = () => {
   }, [locale, totalUsdcBalance]);
 
   const totalGasUsedDisplay = useMemo(() => splitUsdDisplay(totalGasUsedUsdc, 2, locale), [locale, totalGasUsedUsdc]);
-
-  const applyCurrentAddressFilter = () => {
-    if (userAddressValidationError) {
-      return;
-    }
-    setUserAddressFilter(userAddressInput.trim().toLowerCase());
-  };
-
-  const applyMyWalletFilter = () => {
-    if (!address) {
-      return;
-    }
-
-    const lower = address.toLowerCase();
-    setUserAddressInput(lower);
-    setUserAddressFilter(lower);
-  };
-
-  const clearAllUsersFilter = () => {
-    setUserAddressInput('');
-    setUserAddressFilter('');
-  };
 
   return (
     <div className="space-y-6">
@@ -450,64 +393,7 @@ const PortfolioTrackerContent: React.FC = () => {
           <span className="text-xs text-slate-400 font-mono">{t('auditedProxy')}</span>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-          <div className="lg:col-span-2 space-y-1.5">
-            <label htmlFor="audit-user-address" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono">
-              {t('userAddressFilter')}
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="audit-user-address"
-                type="text"
-                value={userAddressInput}
-                onChange={(event) => setUserAddressInput(event.target.value.trim())}
-                placeholder="0x..."
-                className="w-full rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-mono text-slate-200 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={applyCurrentAddressFilter}
-                disabled={Boolean(userAddressValidationError)}
-                className="rounded-lg border border-blue-700 bg-blue-950/70 px-3 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-900/70 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t('apply')}
-              </button>
-              <button
-                type="button"
-                onClick={clearAllUsersFilter}
-                className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/70"
-              >
-                {t('clear')}
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={applyMyWalletFilter}
-                disabled={!address}
-                className="rounded-lg border border-emerald-700 bg-emerald-950/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/60 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t('myWallet')}
-              </button>
-              <button
-                type="button"
-                onClick={clearAllUsersFilter}
-                className="rounded-lg border border-slate-700 bg-slate-900/70 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800/70"
-              >
-                {t('allUsers')}
-              </button>
-            </div>
-            {userAddressValidationError ? (
-              <p className="text-[11px] text-rose-300">{userAddressValidationError}</p>
-            ) : (
-              <p className="text-[11px] text-slate-500">
-                {userAddressFilter
-                  ? `${t('showingLogsFor')} ${shortenAddress(userAddressFilter)}.`
-                  : t('showingAllLogs')}
-              </p>
-            )}
-          </div>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label htmlFor="audit-status-filter" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
               {t('statusFilter')}
@@ -549,7 +435,6 @@ const PortfolioTrackerContent: React.FC = () => {
             <thead className="bg-slate-900/60 text-xs uppercase font-mono text-slate-400 border-b border-slate-800">
               <tr>
                 <th className="px-4 py-3">{t('recipe')}</th>
-                {isAllUsersMode ? <th className="px-4 py-3">{t('userAddress')}</th> : null}
                 <th className="px-4 py-3">{t('status')}</th>
                 <th className="px-4 py-3">{t('transactionHash')}</th>
                 <th className="px-4 py-3">{t('gasFee')}</th>
@@ -559,7 +444,7 @@ const PortfolioTrackerContent: React.FC = () => {
             <tbody className="divide-y divide-slate-800/60">
               {isLoadingLogs ? (
                 <tr>
-                  <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
+                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
                     {t('loadingLogs')}
                   </td>
                 </tr>
@@ -567,7 +452,7 @@ const PortfolioTrackerContent: React.FC = () => {
 
               {!isLoadingLogs && logsError ? (
                 <tr>
-                  <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-rose-300">
+                  <td colSpan={5} className="px-4 py-4 text-xs text-rose-300">
                     {logsError}
                   </td>
                 </tr>
@@ -575,15 +460,15 @@ const PortfolioTrackerContent: React.FC = () => {
 
               {!isLoadingLogs && !logsError && auditLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
-                    {t('noLogs')}
+                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
+                    {address ? t('noLogs') : t('connectWalletBalance')}
                   </td>
                 </tr>
               ) : null}
 
               {!isLoadingLogs && !logsError && auditLogs.length > 0 && visibleLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
+                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
                     {t('noMatchingLogs')}
                   </td>
                 </tr>
@@ -592,9 +477,6 @@ const PortfolioTrackerContent: React.FC = () => {
               {!isLoadingLogs && !logsError && visibleLogs.map((log) => (
                 <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
                   <td className="px-4 py-3 font-medium text-white">{log.recipeName}</td>
-                  {isAllUsersMode ? (
-                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{shortenAddress(log.userAddress)}</td>
-                  ) : null}
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${toStatusClasses(log.status)}`}>
                       {log.status === 'CONFIRMED' ? (

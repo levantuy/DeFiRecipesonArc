@@ -113,11 +113,16 @@ describe('Queue Scheduler & Job Execution', () => {
     createWalletClientMock.mockReturnValue({
       writeContract: writeContractMock,
     });
+    findByIdMock.mockResolvedValue({
+      id: 'test-recipe-123',
+      recipeType: 'AUTO_COMPOUNDER',
+    });
 
     vi.spyOn(simulationEngine.publicClient, 'waitForTransactionReceipt').mockResolvedValueOnce({
       blockNumber: 123n,
       status: 'success',
       gasUsed: 21000n,
+      effectiveGasPrice: 692010400000n,
     } as Awaited<ReturnType<typeof simulationEngine.publicClient.waitForTransactionReceipt>>);
 
     const result = await executeRecipeStepDirectly(sampleJobData);
@@ -129,6 +134,10 @@ describe('Queue Scheduler & Job Execution', () => {
       '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     );
     expect(result.gasUsedUsdc).toBe('85000');
+    expect(updateLogStatusMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'CONFIRMED',
+      gasUsedUsdc: '0.0145322184',
+    }));
   });
 
   it('should retry tx submission when RPC returns -32011 request limit reached', async () => {

@@ -1,6 +1,6 @@
 import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
-import { createWalletClient, http } from 'viem';
+import { createWalletClient, formatUnits, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ExecutionStatus, RecipeStatus } from '../db/types';
@@ -407,7 +407,9 @@ async function waitForReceiptAndPersist(data: TxConfirmationJobData): Promise<vo
       .updateLogStatus({
         executionLogId: data.executionLogId,
         status: ExecutionStatus.CONFIRMED,
-        gasUsedUsdc: receipt.gasUsed ? (Number(receipt.gasUsed) / 1e6).toString() : null,
+        gasUsedUsdc: receipt.gasUsed && receipt.effectiveGasPrice
+          ? formatUnits(receipt.gasUsed * receipt.effectiveGasPrice, 18)
+          : null,
       })
       .catch(() => {
         console.warn('[Keeper Engine] Failed to persist confirmed execution log.');
