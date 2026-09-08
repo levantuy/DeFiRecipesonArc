@@ -66,7 +66,24 @@ Runtime notes:
 - Optional internal fallback can be enabled with `DCA_ROUTE_ALLOW_APP_KIT_FALLBACK=true`.
 - Fallback scope is Arc Testnet only. Keeper never switches DCA route resolution to another chain.
 - If LI.FI does not support Arc in the current environment, route resolution fails with explicit error.
-- App Kit credentials support both legacy and current names: `ARC_APP_KIT_API_KEY` (preferred) or `ARC_APP_KIT_KEY` (legacy).
+- App Kit credentials support both legacy and current names: `ARC_APP_KIT_API_KEY` (preferred) or `ARC_APP_KIT_KEY` (legacy). Only a `KIT_KEY:<id>:<secret>` value is sent as a bearer token; anything else is ignored and the request runs in permissionless mode.
+
+### App Kit swap execution model
+
+The Circle Stablecoin Service does not return a plain `to`/`data` pair. It returns signed
+`transaction.executionParams` plus a `signature` that must be submitted as a single
+`execute(ExecutionParams,TokenInput[],bytes)` call to the Circle adapter contract
+(`0xbbd70b01a1cabc96d5b7b129ae1aaabdf50dd40b` on Arc Testnet, selector `0xaa3e079c`).
+Replaying the inner `instructions` individually only runs the fee leg and never performs the swap.
+
+Before the first App Kit DCA run, whitelist that entrypoint once from the RecipeGuardrail owner wallet:
+
+```bash
+node scripts/whitelist-appkit-swap-adapter.js
+```
+
+Users must keep their USDC allowance for `SHARED_EXECUTOR_PROXY_ADDRESS`, which pulls the
+per-execution amount and approves the adapter before the call.
 
 Legacy fallback swap construction (e.g. local `swapExactTokensForTokens` callData assembly from configured `targetProtocol`) is intentionally disabled to keep runtime behavior deterministic.
 

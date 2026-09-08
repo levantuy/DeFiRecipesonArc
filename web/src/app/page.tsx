@@ -25,6 +25,7 @@ const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
 const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b' as const;
 const DCA_USDC_ALLOWANCE_SPENDERS = [DCA_USDC_SPENDER, DCA_USDC_PROXY_SPENDER] as const;
 const DEFAULT_SESSION_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
+const MIN_SESSION_SPEND_HEADROOM = parseUnits('10', 6);
 const TX_SEND_MAX_RETRIES = 7;
 const TX_SEND_BASE_DELAY_MS = 1500;
 const TX_RETRY_MAX_DELAY_MS = 12000;
@@ -532,14 +533,22 @@ export default function Home() {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
 
-    const isAlreadyValid = await publicClient.readContract({
+    const permission = await publicClient.readContract({
       address: sessionKeyRegistryAddress,
       abi: SESSION_KEY_REGISTRY_ABI,
-      functionName: 'isValidSessionKey',
+      functionName: 'getSessionPermission',
       args: [connectedAddress, configuredKeeperSessionKeyAddress],
     });
 
-    if (isAlreadyValid) {
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const isActive = permission.exists && !permission.revoked && permission.validUntil > nowSeconds;
+    // A key can stay "valid" while its cumulative spend quota is exhausted, which makes every
+    // keeper execution revert with ExceededSpendLimit(). Re-registering resets currentUsdcSpent.
+    const hasSpendHeadroom =
+      permission.maxUsdcSpendLimit === 0n ||
+      permission.maxUsdcSpendLimit - permission.currentUsdcSpent >= MIN_SESSION_SPEND_HEADROOM;
+
+    if (isActive && hasSpendHeadroom) {
       return {
         txHash: null,
         alreadyValid: true,

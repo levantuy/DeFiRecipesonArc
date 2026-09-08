@@ -5,6 +5,12 @@ export const ARC_EURC_ADDRESS = '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a' as 
 export const ARC_CIRBTC_ADDRESS = '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF' as const;
 export const ARC_APP_KIT_DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
 
+// Circle Stablecoin Kit adapter contract on Arc Testnet. Every App Kit swap is a single
+// `execute(ExecutionParams,TokenInput[],bytes)` call against this contract.
+export const ARC_SWAP_ADAPTER_ADDRESS = '0xbbd70b01a1cabc96d5b7b129ae1aaabdf50dd40b' as const;
+export const ARC_SWAP_ADAPTER_EXECUTE_SELECTOR = '0xaa3e079c' as const;
+
+
 export const ARC_TESTNET_SUPPORTED_TOKENS = ['USDC', 'EURC', 'cirBTC'] as const;
 export type ArcTestnetTokenSymbol = (typeof ARC_TESTNET_SUPPORTED_TOKENS)[number];
 

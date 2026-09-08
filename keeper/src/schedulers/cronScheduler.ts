@@ -10,9 +10,10 @@ import { publicClient, simulateRecipeStep } from '../simulation/staticSimulation
 import {
   buildAutoCompounderCallData,
 } from '../simulation/recipePayloads';
-import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI } from '../config/contracts';
+import { CONTRACT_ADDRESSES, RECIPE_GUARDRAIL_ABI, SESSION_KEY_REGISTRY_ABI } from '../config/contracts';
 import {
   ARC_APP_KIT_DCA_USDC_SPENDER,
+  ARC_SWAP_ADAPTER_EXECUTE_SELECTOR,
   ARC_USDC_ADDRESS,
   DEFAULT_DCA_MAX_SLIPPAGE_BPS,
   parseDcaMaxSlippageBpsWithFallback,
@@ -60,6 +61,7 @@ const allowanceExceededHintsLogged = new Set<string>();
 const balanceExceededHintsLogged = new Set<string>();
 const allowancePrecheckHintsLogged = new Set<string>();
 const unsupportedDcaModeHintsLogged = new Set<string>();
+const exceededSpendLimitHintsLogged = new Set<string>();
 const guardrailOwnerCache = { owner: null as `0x${string}` | null, checkedAtMs: 0 };
 const GUARDRAIL_OWNER_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAIMABLE_REWARDS_CACHE_TTL_MS = 30 * 1000;
@@ -392,6 +394,11 @@ function isUnauthorizedKeeperError(errorMessage: string): boolean {
   return normalized.includes('unauthorizedkeeper');
 }
 
+function isExceededSpendLimitError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('exceededspendlimit');
+}
+
 function isSelectorNotAllowedError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return normalized.includes('selectornotallowed');
@@ -549,7 +556,8 @@ function getDcaStrictRequiredSpenders(
 ): `0x${string}`[] {
   const selector = extractSelectorFromCallData(callData).toLowerCase();
   const strictDecodedSpenders = getDcaAlwaysStrictDecodedSpenders(callData, userAddress);
-  if (selector === DCA_SWAP_SELECTOR) {
+  if (selector === DCA_SWAP_SELECTOR || selector === ARC_SWAP_ADAPTER_EXECUTE_SELECTOR) {
+    // Both shapes are executed through SharedExecutorProxy, which pulls USDC from the user first.
     return normalizeDcaSpenderCandidates([
       CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
       ...strictDecodedSpenders,
@@ -746,6 +754,31 @@ async function getGuardrailOwnerAddress(): Promise<`0x${string}`> {
   guardrailOwnerCache.owner = owner;
   guardrailOwnerCache.checkedAtMs = now;
   return owner;
+}
+
+async function getSessionPermissionSnapshot(
+  userAddress: `0x${string}`,
+  sessionKeyAddress: `0x${string}`
+): Promise<{ maxUsdcSpendLimit: bigint; currentUsdcSpent: bigint } | null> {
+  try {
+    const permission = (await withRpcRateLimitHandling(() =>
+      withRpcReadFailover('getSessionPermission', async (client) =>
+        client.readContract({
+          address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+          abi: SESSION_KEY_REGISTRY_ABI,
+          functionName: 'getSessionPermission',
+          args: [userAddress, sessionKeyAddress],
+        })
+      )
+    )) as { maxUsdcSpendLimit: bigint; currentUsdcSpent: bigint };
+
+    return {
+      maxUsdcSpendLimit: BigInt(permission.maxUsdcSpendLimit),
+      currentUsdcSpent: BigInt(permission.currentUsdcSpent),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function targetProtocolHasCode(targetProtocol: `0x${string}`): Promise<boolean> {
@@ -1305,6 +1338,24 @@ export async function pollAndTriggerActiveRecipes() {
             maybeLogSelectorNotAllowedHint(targetProtocol as `0x${string}`, selectorHex, recipe.recipeType, guardrailOwnerAddress);
           }
 
+          if (isExceededSpendLimitError(simulationError)) {
+            const spendHintKey = `${recipe.userAddress.toLowerCase()}:${keeperAccount.address.toLowerCase()}`;
+            if (!exceededSpendLimitHintsLogged.has(spendHintKey)) {
+              const permission = await getSessionPermissionSnapshot(
+                recipe.userAddress as `0x${string}`,
+                keeperAccount.address
+              );
+              console.warn(
+                `[Cron Scheduler Action Required] Keeper session key spend quota is exhausted ${context}. ` +
+                `maxUsdcSpendLimitBaseUnits=${permission?.maxUsdcSpendLimit.toString() ?? 'unknown'} ` +
+                `currentUsdcSpentBaseUnits=${permission?.currentUsdcSpent.toString() ?? 'unknown'}. ` +
+                `From user ${recipe.userAddress}, call registerSessionKey(${keeperAccount.address}, validUntilUnixTimestamp, maxUsdcSpendLimitBaseUnits) ` +
+                `on SessionKeyRegistry ${CONTRACT_ADDRESSES.sessionKeyRegistry} to reset the counter.`
+              );
+              exceededSpendLimitHintsLogged.add(spendHintKey);
+            }
+          }
+
           if (isExecutorNotApprovedError(simulationError)) {
             maybeLogExecutorNotApprovedHint(targetProtocol as `0x${string}`);
           }
@@ -1518,6 +1569,7 @@ export function __resetCronSchedulerStateForTests() {
   balanceExceededHintsLogged.clear();
   allowancePrecheckHintsLogged.clear();
   unsupportedDcaModeHintsLogged.clear();
+  exceededSpendLimitHintsLogged.clear();
   claimableRewardsCache.clear();
   usdcAllowanceCache.clear();
   dedicatedReadClientCache.clear();

@@ -6,6 +6,7 @@ import { publicClient } from '../simulation/staticSimulationEngine';
 import { decodeFunctionData } from 'viem';
 import {
   ARC_APP_KIT_DCA_USDC_SPENDER,
+  ARC_SWAP_ADAPTER_EXECUTE_SELECTOR,
   ARC_USDC_ADDRESS,
   DEFAULT_DCA_TARGET_ASSET_SYMBOL,
   parseDcaMaxSlippageBpsStrict,
@@ -664,7 +665,8 @@ function getDcaStrictRequiredSpenders(
 ): `0x${string}`[] {
   const selector = extractSelectorFromCallData(callData).toLowerCase();
   const strictDecodedSpenders = getDcaAlwaysStrictDecodedSpenders(callData, userAddress);
-  if (selector === DCA_SWAP_SELECTOR) {
+  if (selector === DCA_SWAP_SELECTOR || selector === ARC_SWAP_ADAPTER_EXECUTE_SELECTOR) {
+    // Both shapes are executed through SharedExecutorProxy, which pulls USDC from the user first.
     return normalizeDcaSpenderCandidates([
       CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
       ...strictDecodedSpenders,

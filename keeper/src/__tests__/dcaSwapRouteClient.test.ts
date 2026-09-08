@@ -38,6 +38,49 @@ const request = {
   targetAssetSymbol: 'cirBTC',
 };
 
+const ARC_SWAP_ADAPTER = '0xbbd70b01a1cabc96d5b7b129ae1aaabdf50dd40b';
+const ARC_SWAP_ADAPTER_SELECTOR = '0xaa3e079c';
+
+function appKitSwapResponse(overrides: { stopLimit?: string; minTokenOut?: string } = {}) {
+  return {
+    stopLimit: overrides.stopLimit ?? '45550000',
+    transaction: {
+      signature: '0xdeadbeef',
+      executionParams: {
+        execId: '0x01a07ee4317b764e924b2dde7fb87c6a',
+        deadline: '1788835879',
+        metadata: '0x',
+        tokens: [
+          {
+            token: '0x3600000000000000000000000000000000000000',
+            beneficiary: '0x1111111111111111111111111111111111111111',
+          },
+        ],
+        instructions: [
+          {
+            target: '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9',
+            data: '0x7ebc46f0',
+            value: '0',
+            tokenIn: '0x3600000000000000000000000000000000000000',
+            amountToApprove: '10000',
+            tokenOut: '0x0000000000000000000000000000000000000000',
+            minTokenOut: '0',
+          },
+          {
+            target: '0xff70f4a1d11995621854f3692acf286d8acd04b2',
+            data: '0x4666fc80',
+            value: '0x0',
+            tokenIn: '0x3600000000000000000000000000000000000000',
+            amountToApprove: '49990000',
+            tokenOut: '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF',
+            minTokenOut: overrides.minTokenOut ?? '45550000',
+          },
+        ],
+      },
+    },
+  };
+}
+
 describe('dcaSwapRouteClient', () => {
   it('resolves Arc quote via LI.FI and maps target/callData/minOut/spender', async () => {
     process.env.LIFI_API_KEY = 'test-lifi-api-key';
@@ -157,20 +200,7 @@ describe('dcaSwapRouteClient', () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: async () =>
-        JSON.stringify({
-          transaction: {
-            executionParams: {
-              instructions: [
-                {
-                  target: '0x6666666666666666666666666666666666666666',
-                  data: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000002',
-                  minTokenOut: '45550000',
-                },
-              ],
-            },
-          },
-        }),
+      text: async () => JSON.stringify(appKitSwapResponse()),
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -179,23 +209,17 @@ describe('dcaSwapRouteClient', () => {
     const plan = await client.resolveRoute(request);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(plan).toEqual({
-      targetProtocolAddress: '0x6666666666666666666666666666666666666666',
-      callData: '0x7ebc46f00000000000000000000000000000000000000000000000000000000000000002',
-      minSwapAssetOutBaseUnits: 45550000n,
-    });
+    expect(plan.targetProtocolAddress).toBe(ARC_SWAP_ADAPTER);
+    expect(plan.spenderAddress).toBe(ARC_SWAP_ADAPTER);
+    expect(plan.callData.startsWith(ARC_SWAP_ADAPTER_SELECTOR)).toBe(true);
+    expect(plan.minSwapAssetOutBaseUnits).toBe(45550000n);
   });
 
   it('keeps explicit App Kit provider mode when configured', async () => {
     process.env.DCA_ROUTE_PROVIDER = 'ARC_APP_KIT_SWAP';
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: async () =>
-        JSON.stringify({
-          to: '0x3333333333333333333333333333333333333333',
-          data: '0x87654321',
-          minAmountOut: '48000000',
-        }),
+      text: async () => JSON.stringify(appKitSwapResponse({ stopLimit: '48000000' })),
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -206,25 +230,18 @@ describe('dcaSwapRouteClient', () => {
 
     expect(getQuoteMock).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(plan).toEqual({
-      targetProtocolAddress: '0x3333333333333333333333333333333333333333',
-      callData: '0x87654321',
-      minSwapAssetOutBaseUnits: 48000000n,
-    });
+    expect(plan.targetProtocolAddress).toBe(ARC_SWAP_ADAPTER);
+    expect(plan.callData.startsWith(ARC_SWAP_ADAPTER_SELECTOR)).toBe(true);
+    expect(plan.minSwapAssetOutBaseUnits).toBe(48000000n);
   });
 
-  it('accepts APP_KIT_SWAP alias and uses ARC_APP_KIT_API_KEY for auth', async () => {
+  it('accepts APP_KIT_SWAP alias and only authenticates with a Stablecoin Kit Key', async () => {
     process.env.DCA_ROUTE_PROVIDER = 'APP_KIT_SWAP';
-    process.env.ARC_APP_KIT_API_KEY = 'arc-app-kit-api-key';
+    process.env.ARC_APP_KIT_API_KEY = 'KIT_KEY:key-id:key-secret';
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: async () =>
-        JSON.stringify({
-          to: '0x4444444444444444444444444444444444444444',
-          data: '0xabcdef12',
-          minAmountOut: '47000000',
-        }),
+      text: async () => JSON.stringify(appKitSwapResponse({ stopLimit: '47000000' })),
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -238,15 +255,13 @@ describe('dcaSwapRouteClient', () => {
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: 'Bearer arc-app-kit-api-key',
+          Authorization: 'Bearer KIT_KEY:key-id:key-secret',
         }),
       })
     );
-    expect(plan).toEqual({
-      targetProtocolAddress: '0x4444444444444444444444444444444444444444',
-      callData: '0xabcdef12',
-      minSwapAssetOutBaseUnits: 47000000n,
-    });
+    expect(plan.targetProtocolAddress).toBe(ARC_SWAP_ADAPTER);
+    expect(plan.callData.startsWith(ARC_SWAP_ADAPTER_SELECTOR)).toBe(true);
+    expect(plan.minSwapAssetOutBaseUnits).toBe(47000000n);
   });
 
 });

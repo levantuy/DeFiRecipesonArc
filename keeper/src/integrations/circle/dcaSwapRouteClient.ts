@@ -1,5 +1,14 @@
-import { ARC_CIRBTC_ADDRESS, ARC_EURC_ADDRESS, ARC_USDC_ADDRESS } from '../../config/dcaRouting';
+import {
+  ARC_CIRBTC_ADDRESS,
+  ARC_EURC_ADDRESS,
+  ARC_SWAP_ADAPTER_ADDRESS,
+  ARC_USDC_ADDRESS,
+} from '../../config/dcaRouting';
 import { arcTestnet } from 'viem/chains';
+import {
+  AdapterExecutionParams,
+  buildArcSwapAdapterExecuteCallData,
+} from './arcSwapAdapter';
 
 interface DcaSwapRouteRequest {
   recipientAddress: `0x${string}`;
@@ -274,6 +283,106 @@ function fallbackMinOutFromInput(amountInBaseUnits: bigint, maxSlippageBps: numb
   return (amountInBaseUnits * BigInt(10_000 - maxSlippageBps)) / 10_000n;
 }
 
+const KIT_KEY_PATTERN = /^KIT_KEY:[^:]+:[^:]+$/;
+
+function requireHexAddress(value: unknown, field: string): `0x${string}` {
+  const normalized = normalizeHexAddress(value);
+  if (!normalized) {
+    throw new Error(`App Kit swap response field ${field} is not a valid address.`);
+  }
+  return normalized;
+}
+
+function requireHexBytes(value: unknown, field: string): `0x${string}` {
+  if (typeof value !== 'string' || !/^0x([a-fA-F0-9]{2})*$/.test(value.trim())) {
+    throw new Error(`App Kit swap response field ${field} is not valid hex data.`);
+  }
+  return value.trim() as `0x${string}`;
+}
+
+function requireBigInt(value: unknown, field: string): bigint {
+  if (typeof value === 'string' && /^(0x[a-fA-F0-9]+|\d+)$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+
+  const parsed = parseBigIntFromUnknown(value);
+  if (parsed === null) {
+    throw new Error(`App Kit swap response field ${field} is not a valid integer.`);
+  }
+  return parsed;
+}
+
+function parseAdapterExecutionPayload(payload: unknown): {
+  executionParams: AdapterExecutionParams;
+  signature: `0x${string}`;
+} {
+  const transaction = isRecord(payload) ? payload.transaction : undefined;
+  if (!isRecord(transaction) || !isRecord(transaction.executionParams)) {
+    throw new Error(
+      'App Kit swap response did not include transaction.executionParams. ' +
+        'The Stablecoin Service returns signed adapter execution params, not a raw to/data pair.'
+    );
+  }
+
+  const signature = requireHexBytes(transaction.signature, 'transaction.signature');
+  const raw = transaction.executionParams;
+
+  if (!Array.isArray(raw.instructions) || raw.instructions.length === 0) {
+    throw new Error('App Kit swap response contained no adapter instructions.');
+  }
+
+  const instructions = raw.instructions.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new Error(`App Kit swap instruction #${index} is malformed.`);
+    }
+
+    return {
+      target: requireHexAddress(entry.target, `instructions[${index}].target`),
+      data: requireHexBytes(entry.data, `instructions[${index}].data`),
+      value: requireBigInt(entry.value, `instructions[${index}].value`),
+      tokenIn: requireHexAddress(entry.tokenIn, `instructions[${index}].tokenIn`),
+      amountToApprove: requireBigInt(entry.amountToApprove, `instructions[${index}].amountToApprove`),
+      tokenOut: requireHexAddress(entry.tokenOut, `instructions[${index}].tokenOut`),
+      minTokenOut: requireBigInt(entry.minTokenOut, `instructions[${index}].minTokenOut`),
+    };
+  });
+
+  const tokens = (Array.isArray(raw.tokens) ? raw.tokens : []).map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new Error(`App Kit swap token recipient #${index} is malformed.`);
+    }
+
+    return {
+      token: requireHexAddress(entry.token, `tokens[${index}].token`),
+      beneficiary: requireHexAddress(entry.beneficiary, `tokens[${index}].beneficiary`),
+    };
+  });
+
+  return {
+    executionParams: {
+      instructions,
+      tokens,
+      execId: requireBigInt(raw.execId, 'executionParams.execId'),
+      deadline: requireBigInt(raw.deadline, 'executionParams.deadline'),
+      metadata: requireHexBytes(raw.metadata, 'executionParams.metadata'),
+    },
+    signature,
+  };
+}
+
+function extractAdapterStopLimit(payload: unknown, executionParams: AdapterExecutionParams): bigint {
+  const topLevel = isRecord(payload) ? parseBigIntFromUnknown(payload.stopLimit) : null;
+  if (topLevel !== null && topLevel > 0n) {
+    return topLevel;
+  }
+
+  const swapInstruction = [...executionParams.instructions]
+    .reverse()
+    .find((instruction) => instruction.minTokenOut > 0n);
+
+  return swapInstruction?.minTokenOut ?? 0n;
+}
+
 class AppKitDcaSwapRouteClient implements DcaSwapRouteClient {
   private getTokenOutAddress(targetAssetSymbol: string): `0x${string}` {
     if (targetAssetSymbol === 'EURC') {
@@ -300,7 +409,9 @@ class AppKitDcaSwapRouteClient implements DcaSwapRouteClient {
       Accept: 'application/json',
     };
 
-    if (apiKey) {
+    // Only a Stablecoin Kit Key authenticates this endpoint; any other credential makes it 401.
+    // Without one the service still answers in permissionless mode.
+    if (apiKey && KIT_KEY_PATTERN.test(apiKey)) {
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
@@ -339,21 +450,19 @@ class AppKitDcaSwapRouteClient implements DcaSwapRouteClient {
   async resolveRoute(request: DcaSwapRouteRequest): Promise<DcaSwapExecutionPlan> {
     const response = await this.createSwapRouteViaService(request);
 
-    const transaction = extractTransactionFromResponse(response);
-    if (!transaction) {
-      throw new Error('App Kit swap response did not include executable on-chain transaction data (to/data).');
-    }
-
-    const minSwapAssetOutBaseUnits =
-      extractMinOutFromResponse(response, transaction) ??
-      fallbackMinOutFromInput(request.amountInBaseUnits, request.maxSlippageBps);
-    const spenderAddress = extractSpenderAddressFromResponse(response) ?? undefined;
+    const { executionParams, signature } = parseAdapterExecutionPayload(response);
+    const callData = buildArcSwapAdapterExecuteCallData({
+      executionParams,
+      signature,
+      tokenInAddress: ARC_USDC_ADDRESS,
+      amountInBaseUnits: request.amountInBaseUnits,
+    });
 
     return {
-      targetProtocolAddress: transaction.to,
-      callData: transaction.data,
-      minSwapAssetOutBaseUnits,
-      spenderAddress,
+      targetProtocolAddress: ARC_SWAP_ADAPTER_ADDRESS,
+      callData,
+      minSwapAssetOutBaseUnits: extractAdapterStopLimit(response, executionParams),
+      spenderAddress: ARC_SWAP_ADAPTER_ADDRESS,
     };
   }
 }
