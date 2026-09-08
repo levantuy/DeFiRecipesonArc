@@ -6,7 +6,7 @@
     "node": ">=20 <24"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/next-dev.js",
     "build": "node scripts/next-build.js",
     "start": "next start",
     "lint": "next lint"

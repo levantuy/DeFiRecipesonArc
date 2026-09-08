@@ -9,6 +9,9 @@ import {
   parseDcaActivationConfig,
   parseUsdcAmountToBaseUnits,
 } from '@/lib/dcaConfig';
+import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { en } from '@/lib/i18n/en';
+import { vi } from '@/lib/i18n/vi';
 
 export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA';
 export type SwapProvider = 'ARC_APP_KIT_SWAP';
@@ -88,10 +91,12 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   connectedAddress = null,
   isConfirming = false,
 }) => {
+  const { lang, t } = useLanguage();
+  const dictionary = lang === 'vi' ? vi : en;
   const [maxSlippageBps, setMaxSlippageBps] = useState(recipe?.maxSlippageBps ?? 50);
   const [totalDcaBudgetUsdc, setTotalDcaBudgetUsdc] = useState(recipe?.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
   const [perExecutionUsdc, setPerExecutionUsdc] = useState(recipe?.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
-  const [executionMode, setExecutionMode] = useState<DcaExecutionMode>(recipe?.executionMode ?? 'PULL');
+  const executionMode: DcaExecutionMode = 'PULL';
   const [allowanceCheck, setAllowanceCheck] = useState<DcaAllowancePrecheckResult | null>(null);
   const [allowanceCheckError, setAllowanceCheckError] = useState<string>('');
   const [isCheckingAllowance, setIsCheckingAllowance] = useState(false);
@@ -101,7 +106,6 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       setMaxSlippageBps(recipe.maxSlippageBps);
       setTotalDcaBudgetUsdc(recipe.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
       setPerExecutionUsdc(recipe.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
-      setExecutionMode(recipe.executionMode ?? 'PULL');
       setAllowanceCheck(null);
       setAllowanceCheckError('');
       setIsCheckingAllowance(false);
@@ -121,15 +125,10 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       });
       estimatedRuns = estimateDcaRuns(parsed.totalDcaBudgetBaseUnits, parsed.perExecutionBaseUnits);
       if (estimatedRuns <= 0n) {
-        dcaValidationError = 'Estimated runs is 0. Increase budget or reduce per execution amount.';
-      }
-
-      if (executionMode === 'PREFUND') {
-        dcaValidationError =
-          'PREFUND mode is not supported by current on-chain execution path. Please use PULL mode.';
+        dcaValidationError = t('estimatedRunsZero');
       }
     } catch (error: unknown) {
-      dcaValidationError = error instanceof Error ? error.message : 'Invalid DCA configuration.';
+      dcaValidationError = error instanceof Error ? error.message : t('invalidDcaConfig');
     }
   }
 
@@ -153,7 +152,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       });
       setAllowanceCheck(result);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to check allowance.';
+      const message = error instanceof Error ? error.message : t('failedToCheckAllowance');
       setAllowanceCheckError(message);
       setAllowanceCheck(null);
     } finally {
@@ -168,6 +167,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
     maxSlippageBps,
     totalDcaBudgetUsdc,
     perExecutionUsdc,
+    t,
   ]);
 
   useEffect(() => {
@@ -210,7 +210,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
           <div className="flex items-center justify-between border-b border-slate-700/60 px-6 py-4">
             <div className="flex items-center space-x-2">
               <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-              <h3 className="text-lg font-bold text-white">Pre-Flight Simulation (eth_call)</h3>
+              <h3 className="text-lg font-bold text-white">{t('modalTitle')}</h3>
             </div>
             <button
               type="button"
@@ -226,14 +226,14 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
             <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">Recipe Name</div>
-                  <div className="mt-0.5 text-base font-semibold text-white">{recipe.name}</div>
+                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('recipeName')}</div>
+                  <div className="mt-0.5 text-base font-semibold text-white">{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}</div>
                 </div>
 
                 <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
-                  <div className="mb-2 text-xs uppercase tracking-wider font-mono text-slate-400">Routing & Asset Flow</div>
+                  <div className="mb-2 text-xs uppercase tracking-wider font-mono text-slate-400">{t('routingAssetFlow')}</div>
                   <div className="space-y-2">
-                    {recipe.routeSteps.map((step, index) => (
+                    {(recipe.recipeType === 'AUTO_COMPOUNDER' ? dictionary.recipeAutoCompounderSteps : dictionary.recipeDcaSteps).map((step, index) => (
                       <div key={`${recipe.id}-${index}`} className="flex items-center gap-2 text-sm text-slate-200">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-blue-700 bg-blue-900/40 text-[10px] font-bold text-blue-300">
                           {index + 1}
@@ -243,25 +243,25 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     ))}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                    <span>User Wallet (USDC 6d)</span>
+                    <span>{t('userWallet')}</span>
                     <ArrowRight className="h-4 w-4 text-emerald-400" />
                     <span>SharedExecutorProxy</span>
                     <ArrowRight className="h-4 w-4 text-emerald-400" />
                     <div className="max-w-[40%] truncate">{recipe.targetProtocol}</div>
                   </div>
                   <div className="mt-1 break-all text-[11px] font-mono text-slate-500">
-                    Target: {recipe.targetProtocolAddress || 'Route-resolved at runtime'}
+                    {t('targetProtocol')}: {recipe.targetProtocolAddress || t('routeResolved')}
                   </div>
                   <div className="mt-1 break-all text-[11px] font-mono text-slate-500">
-                    Swap Provider: {recipe.swapProvider || 'N/A'}
+                    {t('swapProvider')}: {recipe.swapProvider || t('na')}
                   </div>
                 </div>
 
                 <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">Parameters & Protection</div>
+                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('parametersProtection')}</div>
                   <div>
                     <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
-                      <span>Max Slippage Tolerance</span>
+                      <span>{t('maxSlippage')}</span>
                       <span className="font-mono text-emerald-400">{(maxSlippageBps / 100).toFixed(2)}%</span>
                     </div>
                     <input
@@ -277,67 +277,32 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   {isDcaRecipe ? (
                     <div>
                       <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
-                        <span>Total DCA Budget (USDC)</span>
-                        <span className="font-mono text-emerald-400">Total allocation</span>
+                        <span>{t('totalDcaBudget')}</span>
+                        <span className="font-mono text-emerald-400">{t('totalAllocation')}</span>
                       </div>
                       <input
                         type="text"
                         value={totalDcaBudgetUsdc}
                         onChange={(event) => setTotalDcaBudgetUsdc(event.target.value)}
-                        placeholder="e.g. 100"
+                        placeholder={t('totalPlaceholder')}
                         className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
                       />
                       <div className="mt-3 mb-1 flex items-center justify-between text-xs text-slate-400">
-                        <span>Per Execution Amount (USDC)</span>
-                        <span className="font-mono text-emerald-400">Each scheduled run</span>
+                        <span>{t('perExecution')}</span>
+                        <span className="font-mono text-emerald-400">{t('eachScheduledRun')}</span>
                       </div>
                       <input
                         type="text"
                         value={perExecutionUsdc}
                         onChange={(event) => setPerExecutionUsdc(event.target.value)}
-                        placeholder="e.g. 5"
+                        placeholder={t('perExecutionPlaceholder')}
                         className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
                       />
-                      <div className="mt-3 mb-1 flex items-center justify-between text-xs text-slate-400">
-                        <span>Execution Mode</span>
-                        <span className="font-mono text-emerald-400">Choose funding model</span>
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-200">
-                          <input
-                            type="radio"
-                            name="dca-execution-mode"
-                            value="PREFUND"
-                            checked={executionMode === 'PREFUND'}
-                            onChange={() => setExecutionMode('PREFUND')}
-                            disabled
-                            className="mt-0.5"
-                          />
-                          <span>
-                            <span className="block font-semibold text-white">Prefund to Contract</span>
-                            <span className="text-slate-400">Coming soon. Not supported in current keeper execution path.</span>
-                          </span>
-                        </label>
-                        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-200">
-                          <input
-                            type="radio"
-                            name="dca-execution-mode"
-                            value="PULL"
-                            checked={executionMode === 'PULL'}
-                            onChange={() => setExecutionMode('PULL')}
-                            className="mt-0.5"
-                          />
-                          <span>
-                            <span className="block font-semibold text-white">Pull from Wallet each run</span>
-                            <span className="text-slate-400">Pull per execution using allowance.</span>
-                          </span>
-                        </label>
-                      </div>
                       <div className="mt-2 text-[11px] text-slate-500">
-                        Supports up to 6 decimals. Validation: total &gt; 0, per execution &gt; 0, per execution ≤ total.
+                        {t('dcaValidationHint')}
                       </div>
                       <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
-                        Estimated Runs: <span className="font-mono text-emerald-400">{estimatedRuns.toString()}</span>
+                        {t('estimatedRuns')}: <span className="font-mono text-emerald-400">{estimatedRuns.toString()}</span>
                       </div>
                       {dcaValidationError ? (
                         <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">
@@ -345,12 +310,11 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                         </div>
                       ) : null}
                       <div className="mt-2 rounded-lg border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200">
-                        Required before scheduler enqueue: approve USDC allowance for spender {DCA_USDC_SPENDER} and transfer proxy {DCA_USDC_PROXY_SPENDER}. 
-                        Policy for this UI: approve once with the full Total DCA Budget.
+                        {t('allowancePolicy')} {DCA_USDC_SPENDER} and transfer proxy {DCA_USDC_PROXY_SPENDER}.
                       </div>
                       <div className="mt-2 rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-200 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="uppercase tracking-wider">Runtime Spender Allowance Precheck</span>
+                          <span className="uppercase tracking-wider">{t('runtimeAllowancePrecheck')}</span>
                           <button
                             type="button"
                             onClick={async () => {
@@ -359,23 +323,23 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                             disabled={isCheckingAllowance || !connectedAddress || Boolean(dcaValidationError)}
                             className="rounded border border-cyan-700/70 px-2 py-0.5 text-[10px] text-cyan-200 disabled:opacity-50"
                           >
-                            {isCheckingAllowance ? 'Checking...' : 'Refresh'}
+                            {isCheckingAllowance ? t('checking') : t('refresh')}
                           </button>
                         </div>
                         {!connectedAddress ? (
-                          <div className="text-amber-200">Connect wallet to run runtime spender allowance precheck.</div>
+                          <div className="text-amber-200">{t('connectForAllowance')}</div>
                         ) : null}
                         {allowanceCheckError ? (
                           <div className="text-rose-300">{allowanceCheckError}</div>
                         ) : null}
                         {allowanceCheck ? (
                           <div className="space-y-1">
-                            <div>Runtime spender: <span className="font-mono text-white break-all">{allowanceCheck.runtimeSpender}</span></div>
-                            <div>Target protocol: <span className="font-mono text-white break-all">{allowanceCheck.targetProtocolAddress}</span></div>
-                            <div>Allowance now: <span className="font-mono text-white">{allowanceCheck.currentAllowanceBaseUnits}</span> base units</div>
+                            <div>{t('runtimeSpender')}: <span className="font-mono text-white break-all">{allowanceCheck.runtimeSpender}</span></div>
+                            <div>{t('targetProtocol')}: <span className="font-mono text-white break-all">{allowanceCheck.targetProtocolAddress}</span></div>
+                            <div>{t('allowanceNow')}: <span className="font-mono text-white">{allowanceCheck.currentAllowanceBaseUnits}</span> {t('baseUnits')}</div>
                             {allowanceCheck.requiredSpenders && allowanceCheck.requiredSpenders.length > 0 ? (
                               <div>
-                                Required spender approvals:
+                                {t('requiredApprovals')}:
                                 {allowanceCheck.requiredSpenders.map((spender) => (
                                   <div key={spender} className="font-mono text-white break-all">
                                     {spender} : {allowanceCheck.allowanceBySpender?.[spender.toLowerCase()] || '0'}
@@ -383,13 +347,13 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                                 ))}
                               </div>
                             ) : null}
-                            <div>Required scheduler (per run): <span className="font-mono text-white">{allowanceCheck.requiredForSchedulerBaseUnits}</span></div>
-                            <div>Required activation policy (total budget): <span className="font-mono text-white">{allowanceCheck.requiredForActivationBaseUnits}</span></div>
+                            <div>{t('requiredScheduler')}: <span className="font-mono text-white">{allowanceCheck.requiredForSchedulerBaseUnits}</span></div>
+                            <div>{t('requiredActivation')}: <span className="font-mono text-white">{allowanceCheck.requiredForActivationBaseUnits}</span></div>
                             <div className={allowanceCheck.isEnoughForScheduler ? 'text-emerald-300' : 'text-amber-200'}>
-                              Scheduler readiness: {allowanceCheck.isEnoughForScheduler ? 'READY' : 'NOT READY'}
+                              {t('schedulerReadiness')}: {allowanceCheck.isEnoughForScheduler ? t('ready') : t('notReady')}
                             </div>
                             <div className={allowanceCheck.isEnoughForActivation ? 'text-emerald-300' : 'text-amber-200'}>
-                              Activation policy readiness: {allowanceCheck.isEnoughForActivation ? 'READY' : 'WILL REQUIRE APPROVE'}
+                              {t('activationReadiness')}: {allowanceCheck.isEnoughForActivation ? t('ready') : t('willRequireApprove')}
                             </div>
                           </div>
                         ) : null}
@@ -401,14 +365,14 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
 
               <div className="space-y-4">
                 <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">Quick Summary</div>
+                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('quickSummary')}</div>
                   <div className="mt-3 space-y-3">
                     <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                      <div className="text-xs text-slate-400">Estimated Keeper Gas Fee</div>
+                      <div className="text-xs text-slate-400">{t('estimatedKeeperGas')}</div>
                       <div className="mt-1 font-mono font-bold text-blue-400">~{recipe.estimatedGasUsdc} USDC</div>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                      <div className="text-xs text-slate-400">Expected Net Yield</div>
+                      <div className="text-xs text-slate-400">{t('expectedNetYield')}</div>
                       <div className="mt-1 font-mono font-bold text-emerald-400">{recipe.expectedNetApy}</div>
                     </div>
                   </div>
@@ -416,18 +380,18 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
 
                 <div className="flex items-start space-x-2.5 rounded-xl border border-amber-800/60 bg-amber-950/40 p-3 text-xs text-amber-200">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-                  <span>{recipe.riskWarning}</span>
+                  <span>{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderRisk') : t('recipeDcaRisk')}</span>
                 </div>
 
                 {isDcaRecipe ? (
                   <div className="rounded-xl border border-blue-800/60 bg-blue-950/30 p-3 text-xs text-blue-200">
-                    <div className="text-[11px] uppercase tracking-wider text-blue-300">DCA Activation Confirmation</div>
+                    <div className="text-[11px] uppercase tracking-wider text-blue-300">{t('dcaConfirmation')}</div>
                     <div className="mt-2 leading-relaxed">
-                      You authorize the automation system to use up to <span className="font-mono text-white">{totalDcaBudgetUsdc || '0'} USDC</span> for this recurring DCA strategy.
-                      Each execution uses <span className="font-mono text-white">{perExecutionUsdc || '0'} USDC</span> in <span className="font-mono text-white">{executionMode === 'PREFUND' ? 'PREFUND' : 'PULL_PER_RUN'}</span> mode.
+                      {t('dcaAuthorization')} <span className="font-mono text-white">{totalDcaBudgetUsdc || '0'} USDC</span> for this recurring DCA strategy.
+                      {t('eachExecutionUses')} <span className="font-mono text-white">{perExecutionUsdc || '0'} USDC</span> {t('inMode')} <span className="font-mono text-white">PULL_PER_RUN</span>.
                     </div>
                     <div className="mt-2 text-[11px] text-blue-300">
-                      Risks: market slippage, route liquidity changes, and allowance availability for pull-based execution.
+                      {t('dcaRisks')}
                     </div>
                   </div>
                 ) : null}
@@ -435,7 +399,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                 <div className="flex items-start space-x-2.5 rounded-xl border border-emerald-800/60 bg-emerald-950/40 p-3 text-xs text-emerald-300">
                   <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                   <span>
-                    One-click flow: sign in wallet once to register/refresh delegation when needed. If delegation is already valid, activation continues without a new on-chain registration tx.
+                    {t('oneClickFlow')}
                   </span>
                 </div>
               </div>
@@ -453,7 +417,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                 disabled={isConfirming}
                 className="pointer-events-auto rounded-xl px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
               >
-                Cancel
+                {t('cancel')}
               </button>
               <button
                 type="button"
@@ -502,7 +466,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                 }}
                 className="pointer-events-auto rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition-all hover:from-blue-500 hover:to-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isConfirming ? 'Activating...' : 'One-Click Activate'}
+                {isConfirming ? t('activating') : t('oneClickActivate')}
               </button>
             </div>
           </div>

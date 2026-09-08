@@ -7,6 +7,7 @@ import { formatUnits } from 'viem';
 import { useAccount, useBalance } from 'wagmi';
 
 import { CONTRACT_ADDRESSES } from '../config/contracts';
+import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
 interface AuditLog {
   id: string;
@@ -65,12 +66,12 @@ function toStatusClasses(status: AuditLog['status']): string {
   return 'bg-rose-950 border-rose-800 text-rose-400';
 }
 
-function formatAbsoluteTimestamp(isoTimestamp: string): string {
+function formatAbsoluteTimestamp(isoTimestamp: string, locale: string): string {
   const parsed = Date.parse(isoTimestamp);
   if (!Number.isFinite(parsed)) {
-    return 'N/A';
+    return locale === 'vi-VN' ? 'Không có' : 'N/A';
   }
-  return new Date(parsed).toLocaleString('en-US', {
+  return new Date(parsed).toLocaleString(locale, {
     year: 'numeric',
     month: 'short',
     day: '2-digit',
@@ -88,10 +89,10 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
 
-function splitUsdDisplay(value: number, fractionDigits: number): { whole: string; fraction: string } {
+function splitUsdDisplay(value: number, fractionDigits: number, locale: string): { whole: string; fraction: string } {
   const normalized = Number.isFinite(value) ? Math.max(0, value) : 0;
   const [whole = '0', fraction = '00'] = normalized
-    .toLocaleString('en-US', {
+    .toLocaleString(locale, {
       minimumFractionDigits: fractionDigits,
       maximumFractionDigits: fractionDigits,
     })
@@ -110,6 +111,8 @@ function parseUsdcAmount(value: string | null | undefined): number {
 }
 
 const PortfolioTrackerContent: React.FC = () => {
+  const { lang, t } = useLanguage();
+  const locale = lang === 'vi' ? 'vi-VN' : 'en-US';
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -194,10 +197,10 @@ const PortfolioTrackerContent: React.FC = () => {
       return null;
     }
     if (!isAddress(trimmed)) {
-      return 'Address must be a valid 20-byte hex address (0x...).';
+      return t('invalidAddress');
     }
     return null;
-  }, [userAddressInput]);
+  }, [t, userAddressInput]);
 
   const isAllUsersMode = !userAddressFilter;
 
@@ -318,10 +321,10 @@ const PortfolioTrackerContent: React.FC = () => {
     if (totalUsdcBalance === null) {
       return { whole: '--', fraction: '--' };
     }
-    return splitUsdDisplay(totalUsdcBalance, 2);
-  }, [totalUsdcBalance]);
+    return splitUsdDisplay(totalUsdcBalance, 2, locale);
+  }, [locale, totalUsdcBalance]);
 
-  const totalGasUsedDisplay = useMemo(() => splitUsdDisplay(totalGasUsedUsdc, 2), [totalGasUsedUsdc]);
+  const totalGasUsedDisplay = useMemo(() => splitUsdDisplay(totalGasUsedUsdc, 2, locale), [locale, totalGasUsedUsdc]);
 
   const applyCurrentAddressFilter = () => {
     if (userAddressValidationError) {
@@ -359,7 +362,7 @@ const PortfolioTrackerContent: React.FC = () => {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
           <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">SessionKeyRegistry</div>
+            <div className="text-slate-400 text-[10px]">{t('sessionKeyRegistryLabel')}</div>
             <a
               href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sessionKeyRegistry}`}
               target="_blank"
@@ -370,7 +373,7 @@ const PortfolioTrackerContent: React.FC = () => {
             </a>
           </div>
           <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">RecipeGuardrail</div>
+            <div className="text-slate-400 text-[10px]">{t('recipeGuardrailLabel')}</div>
             <a
               href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.recipeGuardrail}`}
               target="_blank"
@@ -381,7 +384,7 @@ const PortfolioTrackerContent: React.FC = () => {
             </a>
           </div>
           <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">SharedExecutorProxy</div>
+            <div className="text-slate-400 text-[10px]">{t('sharedExecutorProxyLabel')}</div>
             <a
               href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sharedExecutorProxy}`}
               target="_blank"
@@ -398,7 +401,7 @@ const PortfolioTrackerContent: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="glass-card p-5">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Total USDC Balance (6 Decimals)</span>
+            <span>{t('balance')}</span>
             <Wallet className="h-4 w-4 text-blue-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono mt-2">
@@ -406,33 +409,33 @@ const PortfolioTrackerContent: React.FC = () => {
           </div>
           <div className="text-xs text-emerald-400 mt-1 flex items-center space-x-1">
             <ArrowUpRight className="h-3.5 w-3.5" />
-            <span>{isLoadingUsdcBalance ? 'Refreshing wallet balance...' : address ? 'Live wallet USDC balance on Arc Testnet' : 'Connect wallet to load live USDC balance'}</span>
+            <span>{isLoadingUsdcBalance ? t('refreshingBalance') : address ? t('liveBalance') : t('connectWalletBalance')}</span>
           </div>
         </div>
 
         <div className="glass-card p-5">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Active Automated Recipes</span>
+            <span>{t('activeRecipes')}</span>
             <Clock className="h-4 w-4 text-emerald-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono mt-2">
-            {activeRecipeCount} <span className="text-xs font-sans font-normal text-slate-400">Recipes Running</span>
+            {activeRecipeCount} <span className="text-xs font-sans font-normal text-slate-400">{t('recipesRunning')}</span>
           </div>
           <div className="text-xs text-slate-400 mt-1">
-            Scoped Keeper Authorization Active
+            {t('scopedAuthorization')}
           </div>
         </div>
 
         <div className="glass-card p-5">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase">
-            <span>Cumulative Gas Used (USDC)</span>
+            <span>{t('cumulativeGas')}</span>
             <CheckCircle className="h-4 w-4 text-purple-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono mt-2">
             ${totalGasUsedDisplay.whole}.<span className="text-slate-400 text-xl">{totalGasUsedDisplay.fraction}</span>
           </div>
           <div className="text-xs text-purple-300 mt-1">
-            Summed from live execution logs (latest 50 entries)
+            {t('gasSummary')}
           </div>
         </div>
       </div>
@@ -442,15 +445,15 @@ const PortfolioTrackerContent: React.FC = () => {
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold text-white flex items-center space-x-2">
             <History className="h-5 w-5 text-blue-400" />
-            <span>Execution Audit Logs (Real-time Transparent History)</span>
+            <span>{t('auditLogs')}</span>
           </h3>
-          <span className="text-xs text-slate-400 font-mono">Audited SharedExecutorProxy</span>
+          <span className="text-xs text-slate-400 font-mono">{t('auditedProxy')}</span>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
           <div className="lg:col-span-2 space-y-1.5">
             <label htmlFor="audit-user-address" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono">
-              User Address Filter
+              {t('userAddressFilter')}
             </label>
             <div className="flex gap-2">
               <input
@@ -467,14 +470,14 @@ const PortfolioTrackerContent: React.FC = () => {
                 disabled={Boolean(userAddressValidationError)}
                 className="rounded-lg border border-blue-700 bg-blue-950/70 px-3 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-900/70 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Apply
+                {t('apply')}
               </button>
               <button
                 type="button"
                 onClick={clearAllUsersFilter}
                 className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/70"
               >
-                Clear
+                {t('clear')}
               </button>
             </div>
             <div className="flex items-center gap-2">
@@ -484,14 +487,14 @@ const PortfolioTrackerContent: React.FC = () => {
                 disabled={!address}
                 className="rounded-lg border border-emerald-700 bg-emerald-950/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/60 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                My Wallet
+                {t('myWallet')}
               </button>
               <button
                 type="button"
                 onClick={clearAllUsersFilter}
                 className="rounded-lg border border-slate-700 bg-slate-900/70 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800/70"
               >
-                All Users
+                {t('allUsers')}
               </button>
             </div>
             {userAddressValidationError ? (
@@ -499,15 +502,15 @@ const PortfolioTrackerContent: React.FC = () => {
             ) : (
               <p className="text-[11px] text-slate-500">
                 {userAddressFilter
-                  ? `Showing logs for ${shortenAddress(userAddressFilter)}.`
-                  : 'Showing logs for all users.'}
+                  ? `${t('showingLogsFor')} ${shortenAddress(userAddressFilter)}.`
+                  : t('showingAllLogs')}
               </p>
             )}
           </div>
 
           <div>
             <label htmlFor="audit-status-filter" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
-              Status Filter
+              {t('statusFilter')}
             </label>
             <select
               id="audit-status-filter"
@@ -526,7 +529,7 @@ const PortfolioTrackerContent: React.FC = () => {
 
           <div>
             <label htmlFor="audit-sort-mode" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
-              Sort Mode
+              {t('sortMode')}
             </label>
             <select
               id="audit-sort-mode"
@@ -534,9 +537,9 @@ const PortfolioTrackerContent: React.FC = () => {
               onChange={(event) => setSortMode(event.target.value as SortMode)}
               className="w-full rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-blue-500 focus:outline-none"
             >
-              <option value="NEWEST">Timestamp: Newest first</option>
-              <option value="OLDEST">Timestamp: Oldest first</option>
-              <option value="STATUS">Status priority</option>
+              <option value="NEWEST">{t('newest')}</option>
+              <option value="OLDEST">{t('oldest')}</option>
+              <option value="STATUS">{t('statusPriority')}</option>
             </select>
           </div>
         </div>
@@ -545,19 +548,19 @@ const PortfolioTrackerContent: React.FC = () => {
           <table className="w-full text-left text-sm text-slate-300">
             <thead className="bg-slate-900/60 text-xs uppercase font-mono text-slate-400 border-b border-slate-800">
               <tr>
-                <th className="px-4 py-3">Recipe</th>
-                {isAllUsersMode ? <th className="px-4 py-3">User Address</th> : null}
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Transaction Hash</th>
-                <th className="px-4 py-3">Gas Fee (USDC)</th>
-                <th className="px-4 py-3">Timestamp</th>
+                <th className="px-4 py-3">{t('recipe')}</th>
+                {isAllUsersMode ? <th className="px-4 py-3">{t('userAddress')}</th> : null}
+                <th className="px-4 py-3">{t('status')}</th>
+                <th className="px-4 py-3">{t('transactionHash')}</th>
+                <th className="px-4 py-3">{t('gasFee')}</th>
+                <th className="px-4 py-3">{t('timestamp')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {isLoadingLogs ? (
                 <tr>
                   <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
-                    Loading execution logs...
+                    {t('loadingLogs')}
                   </td>
                 </tr>
               ) : null}
@@ -573,7 +576,7 @@ const PortfolioTrackerContent: React.FC = () => {
               {!isLoadingLogs && !logsError && auditLogs.length === 0 ? (
                 <tr>
                   <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
-                    No execution logs yet.
+                    {t('noLogs')}
                   </td>
                 </tr>
               ) : null}
@@ -581,7 +584,7 @@ const PortfolioTrackerContent: React.FC = () => {
               {!isLoadingLogs && !logsError && auditLogs.length > 0 && visibleLogs.length === 0 ? (
                 <tr>
                   <td colSpan={isAllUsersMode ? 6 : 5} className="px-4 py-4 text-xs text-slate-400">
-                    No logs match the selected filters.
+                    {t('noMatchingLogs')}
                   </td>
                 </tr>
               ) : null}
@@ -613,12 +616,12 @@ const PortfolioTrackerContent: React.FC = () => {
                         {`${log.txHash.slice(0, 10)}...${log.txHash.slice(-6)}`}
                       </a>
                     ) : (
-                      <span className="text-slate-500">N/A</span>
+                      <span className="text-slate-500">{t('na')}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">{log.gasUsedUsdc || 'N/A'}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{log.gasUsedUsdc || t('na')}</td>
                   <td className="px-4 py-3 text-xs">
-                    <div className="text-slate-300 font-mono">{formatAbsoluteTimestamp(log.timestampIso)}</div>
+                    <div className="text-slate-300 font-mono">{formatAbsoluteTimestamp(log.timestampIso, locale)}</div>
                     <div className="text-slate-500">{log.timestampRelative}</div>
                   </td>
                 </tr>
@@ -632,12 +635,14 @@ const PortfolioTrackerContent: React.FC = () => {
 };
 
 export const PortfolioTracker: React.FC = () => {
+  const { t } = useLanguage();
+
   return (
     <Suspense
       fallback={
         <div className="space-y-6">
           <div className="glass-card p-6">
-            <p className="text-sm text-slate-400">Loading portfolio tracker...</p>
+            <p className="text-sm text-slate-400">{t('loadingPortfolio')}</p>
           </div>
         </div>
       }

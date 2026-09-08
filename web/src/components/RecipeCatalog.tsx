@@ -4,6 +4,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Layers, Play } from 'lucide-react';
 import { RecipeConfig } from './SimulationModal';
+import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
 export const RECIPES: (RecipeConfig & { description: string; risk: string; apy: string; defaultIntervalHours: number })[] = [
   {
@@ -49,15 +50,17 @@ interface RecipeCatalogProps {
 }
 
 export const RecipeCatalog: React.FC<RecipeCatalogProps> = ({ onSelectRecipe }) => {
+  const { t } = useLanguage();
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-white flex items-center space-x-2">
           <Layers className="h-6 w-6 text-blue-400" />
-          <span>Official USDC Recipes (MVP Scope)</span>
+          <span>{t('recipeCatalogTitle')}</span>
         </h2>
         <p className="text-slate-400 text-sm mt-1">
-          Select an audited, non-custodial automated workflow to simulate and activate on Arc Testnet.
+          {t('recipeCatalogDescription')}
         </p>
       </div>
 
@@ -73,24 +76,24 @@ export const RecipeCatalog: React.FC<RecipeCatalogProps> = ({ onSelectRecipe }) 
             <div>
               <div className="flex items-center justify-between mb-3">
                 <span className="px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-400 text-xs font-semibold">
-                  {recipe.risk}
+                  {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('lowRisk') : t('lowMediumRisk')}
                 </span>
                 <span className="text-xs font-mono font-bold text-blue-400 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-800">
-                  {recipe.apy}
+                  {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('apy') : t('dcaStrategy')}
                 </span>
               </div>
 
               <h3 className="text-lg font-bold text-white group-hover:text-blue-400 transition-colors">
-                {recipe.name}
+                {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}
               </h3>
               <p className="text-slate-400 text-xs mt-2 leading-relaxed">
-                {recipe.description}
+                {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderDescription') : t('recipeDcaDescription')}
               </p>
             </div>
 
             <div className="mt-6 pt-4 border-t border-slate-800 flex items-center justify-between">
               <div className="text-xs text-slate-500 font-mono">
-                Protocol: <span className="text-slate-300 font-sans">{recipe.targetProtocol}</span>
+                {t('protocol')}: <span className="text-slate-300 font-sans">{recipe.targetProtocol}</span>
               </div>
 
               <button
@@ -98,7 +101,7 @@ export const RecipeCatalog: React.FC<RecipeCatalogProps> = ({ onSelectRecipe }) 
                 className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-md shadow-blue-500/20 transition-all"
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Simulate & Activate</span>
+                <span>{t('simulateActivate')}</span>
               </button>
             </div>
           </motion.div>

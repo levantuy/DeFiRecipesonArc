@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import './globals.css';
 import { Providers } from './providers';
 
@@ -12,10 +13,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const locale = cookies().get('NEXT_LOCALE')?.value === 'vi' ? 'vi' : 'en';
+
   return (
-    <html lang="en" className="dark">
+    <html lang={locale} className="dark">
       <body className="antialiased bg-background text-foreground min-h-screen">
-        <Providers>{children}</Providers>
+        <Providers initialLang={locale}>{children}</Providers>
       </body>
     </html>
   );

@@ -27,7 +27,6 @@
         "./src/*"
       ]
     }
-    
   },
   "include": [
     "next-env.d.ts",
@@ -35,6 +34,8 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     "global.d.ts" // <-- Đảm bảo file .d.ts của bạn có trong này (hoặc có pattern **/*.ts)
+    ,
+    ".next-dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

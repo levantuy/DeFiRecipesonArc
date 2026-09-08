@@ -19,6 +19,7 @@ import {
 import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
+import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
 const DEFAULT_MAX_USDC_SPEND_PER_TX = '500';
 const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
@@ -255,6 +256,8 @@ async function precheckDcaAllowance(payload: {
 }
 
 export default function Home() {
+  const { lang, t } = useLanguage();
+  const locale = lang === 'vi' ? 'vi-VN' : 'en-US';
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeConfig | null>(null);
   const [activeRecipes, setActiveRecipes] = useState<Record<string, ActiveRecipeState>>({});
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
@@ -1199,25 +1202,25 @@ export default function Home() {
           <div className="relative z-10 space-y-4 max-w-3xl">
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-950/80 border border-blue-800 text-blue-400 text-xs font-semibold">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>Lean Core Execution &amp; Security Focus (v2.1)</span>
+              <span>{t('heroBadge')}</span>
             </div>
 
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
-              Automate Your Yield on Arc Network with <span className="gradient-text">Zero Compromises</span>
+              {t('heroTitle')} <span className="gradient-text">{t('heroTitleAccent')}</span>
             </h1>
 
             <p className="text-slate-300 text-base leading-relaxed">
-              DeFi Recipes delivers audited, non-custodial financial automation workflows. Enjoy sub-second finality, transparent static simulation via <code>eth_call</code>, and native USDC gas predictability.
+              {t('heroDescription')}
             </p>
 
             <div className="flex flex-wrap gap-4 pt-2 text-xs font-mono text-slate-400">
               <div className="flex items-center space-x-1.5">
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span>Audited SharedExecutorProxy</span>
+                <span>{t('heroProxy')}</span>
               </div>
               <div className="flex items-center space-x-1.5">
                 <Cpu className="h-4 w-4 text-blue-400" />
-                <span>Viem v2 Pre-Flight Simulation</span>
+                <span>{t('heroSimulation')}</span>
               </div>
             </div>
           </div>
@@ -1228,11 +1231,11 @@ export default function Home() {
 
         <section className="glass-card p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-white">Active Delegations</h2>
+            <h2 className="text-xl font-bold text-white">{t('activeDelegations')}</h2>
             <div className="text-right space-y-1">
-              <span className="block text-xs text-slate-400 font-mono">1-click pause/revoke</span>
+              <span className="block text-xs text-slate-400 font-mono">{t('pauseRevoke')}</span>
               <span className="block text-[11px] font-mono text-slate-500">
-                Data source: {delegationDataSource === 'keeper-db' ? 'Keeper DB' : delegationDataSource === 'memory-fallback' ? 'Memory Fallback' : 'Unknown'}
+                {t('dataSource')}: {delegationDataSource === 'keeper-db' ? t('keeperDb') : delegationDataSource === 'memory-fallback' ? t('memoryFallback') : t('unknown')}
               </span>
             </div>
           </div>
@@ -1250,9 +1253,9 @@ export default function Home() {
           ) : null}
 
           <div className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 space-y-1">
-            <div className="uppercase tracking-wider text-[11px] text-slate-400">Runtime Contract Routing</div>
+            <div className="uppercase tracking-wider text-[11px] text-slate-400">{t('runtimeRouting')}</div>
             <div>
-              SessionKeyRegistry in use:{' '}
+              {t('sessionKeyInUse')}:{' '}
               <a
                 href={`https://testnet.arcscan.app/address/${runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}`}
                 target="_blank"
@@ -1263,10 +1266,10 @@ export default function Home() {
               </a>
             </div>
             <div className="text-[11px] text-slate-500">
-              Source:{' '}
+              {t('source')}:{' '}
               {runtimeSessionKeyRegistryAddress
-                ? 'SharedExecutorProxy.sessionKeyRegistry() runtime resolution'
-                : 'web config fallback (runtime resolution pending)'}
+                ? t('runtimeResolution')
+                : t('configFallback')}
             </div>
           </div>
 
@@ -1292,23 +1295,23 @@ export default function Home() {
                   className="border border-slate-800 bg-slate-900/60 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
                 >
                   <div className="space-y-1">
-                    <div className="text-white font-semibold">{recipe.name}</div>
+                    <div className="text-white font-semibold">{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}</div>
                     <div className="text-xs text-slate-400">
-                      Status: <span className="font-mono text-slate-200 uppercase">{status}</span>
+                      {t('status')}: <span className="font-mono text-slate-200 uppercase">{status}</span>
                     </div>
                     {lifecycle ? (
                       <div className="text-xs text-slate-400">
-                        Tx Lifecycle: <span className="font-mono text-slate-200 uppercase">{lifecycle.txLifecycleStatus}</span>
+                        {t('txLifecycle')}: <span className="font-mono text-slate-200 uppercase">{lifecycle.txLifecycleStatus}</span>
                       </div>
                     ) : null}
                     {lifecycle ? (
                       <div className="text-xs text-slate-400">
-                        Expires: <span className="font-mono text-slate-200">{new Date(lifecycle.validUntil).toLocaleString()}</span>
+                        {t('expires')}: <span className="font-mono text-slate-200">{new Date(lifecycle.validUntil).toLocaleString(locale)}</span>
                       </div>
                     ) : null}
                     {lifecycle ? (
                       <div className="text-xs text-slate-400">
-                        Per-Tx Cap: <span className="font-mono text-slate-200">{lifecycle.maxUsdcSpendPerTx}</span>
+                        {t('perTxCap')}: <span className="font-mono text-slate-200">{lifecycle.maxUsdcSpendPerTx}</span>
                       </div>
                     ) : null}
                     {lifecycle?.txHash ? (
@@ -1323,7 +1326,7 @@ export default function Home() {
                     ) : null}
                     {lifecycle && !lifecycle.txHash ? (
                       <div className="text-xs text-emerald-300">
-                        Delegation restored without tx hash.
+                        {t('restoredWithoutTx')}
                       </div>
                     ) : null}
                   </div>
@@ -1336,7 +1339,7 @@ export default function Home() {
                       disabled={!lifecycle || status === 'revoked' || isUpdatingDelegation || isActivating || !keeperSessionKeyAddress}
                       className="px-3 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-white"
                     >
-                      {isUpdatingDelegation ? 'Submitting...' : status === 'paused' ? 'Resume' : 'Pause'}
+                      {isUpdatingDelegation ? t('submitting') : status === 'paused' ? t('resume') : t('pause')}
                     </button>
                     <button
                       type="button"
@@ -1346,7 +1349,7 @@ export default function Home() {
                       disabled={!lifecycle || status === 'revoked' || isUpdatingDelegation || isActivating || !keeperSessionKeyAddress}
                       className="px-3 py-1.5 rounded-lg bg-rose-700/80 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-white"
                     >
-                      {isUpdatingDelegation ? 'Submitting...' : 'Revoke'}
+                      {isUpdatingDelegation ? t('submitting') : t('revoke')}
                     </button>
                   </div>
                 </div>
@@ -1356,21 +1359,21 @@ export default function Home() {
         </section>
 
         <section className="glass-card p-4 text-xs text-slate-300 space-y-1">
-          <div className="font-semibold text-slate-100">Wallet Flow Performance (local session)</div>
+          <div className="font-semibold text-slate-100">{t('walletPerformance')}</div>
           <div>
-            Time to submitted p95:{' '}
+            {t('timeToSubmitted')}:{' '}
             <span className="font-mono text-slate-100">
               {toP95(frontendMetrics.timeToSubmittedMs) !== null
                 ? `${toP95(frontendMetrics.timeToSubmittedMs)}ms`
-                : 'N/A'}
+                : t('notAvailable')}
             </span>
           </div>
           <div>
-            Time to confirmed p95:{' '}
+            {t('timeToConfirmed')}:{' '}
             <span className="font-mono text-slate-100">
               {toP95(frontendMetrics.timeToConfirmedMs) !== null
                 ? `${toP95(frontendMetrics.timeToConfirmedMs)}ms`
-                : 'N/A'}
+                : t('notAvailable')}
             </span>
           </div>
         </section>
@@ -1403,7 +1406,7 @@ export default function Home() {
       />
 
       <footer className="border-t border-slate-800/80 py-6 text-center text-xs text-slate-500 font-mono">
-        DeFi Recipes on Arc &bull; Community-built for Arc Network (Chain ID: 5042002)
+        {t('footer')}
       </footer>
     </div>
   );
