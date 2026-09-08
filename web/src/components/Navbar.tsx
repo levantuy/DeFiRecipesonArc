@@ -29,6 +29,14 @@ export const Navbar: React.FC = () => {
       </div>
 
       <div className="flex items-center space-x-4">
+        <nav className="hidden items-center gap-2 md:flex">
+          <a href="/" className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-blue-500 hover:text-white">
+            Recipes
+          </a>
+          <a href="/swap" className="rounded-lg border border-blue-700 bg-blue-950/60 px-3 py-1.5 text-xs font-medium text-blue-200 transition hover:border-blue-500 hover:text-white">
+            Swap
+          </a>
+        </nav>
         <div className="hidden md:flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-mono text-emerald-400">
           <span className={`h-2 w-2 rounded-full ${isArcChain ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
           <span>{isArcChain ? t('navArcTestnet') : t('navWrongNetwork')}</span>

@@ -137,6 +137,37 @@ export interface Dictionary {
   sessionKeyRegistryLabel: string;
   recipeGuardrailLabel: string;
   sharedExecutorProxyLabel: string;
+  swapPageEyebrow: string;
+  swapPageTitle: string;
+  swapPanelEyebrow: string;
+  swapPanelTitle: string;
+  walletConnected: string;
+  walletDisconnected: string;
+  swapFormTitle: string;
+  externalWalletSource: string;
+  noWalletSource: string;
+  swapSettings: string;
+  maxSlippageSwap: string;
+  minOutput: string;
+  floorPricePlaceholder: string;
+  sell: string;
+  max: string;
+  insufficientBalance: string;
+  buy: string;
+  swapBalance: string;
+  rate: string;
+  appFee: string;
+  slippage: string;
+  connectWalletBeforeSwapping: string;
+  getTokenFromFaucet: string;
+  confirmSwap: string;
+  reviewQuoteFinal: string;
+  pay: string;
+  receiveEstimated: string;
+  swapConfirm: string;
+  swapConfirmed: string;
+  failedToFetchQuote: string;
+  swapExecutionFailed: string;
 }
 
 export type DictKey = {
