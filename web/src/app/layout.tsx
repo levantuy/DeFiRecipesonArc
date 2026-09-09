@@ -6,6 +6,9 @@ import { Providers } from './providers';
 export const metadata: Metadata = {
   title: 'DeFi Recipes on Arc - Automated Non-Custodial Yield Workflows',
   description: 'Trusted, secure, and automated DeFi workflow recipes built specifically for Arc Network with native USDC gas.',
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({
