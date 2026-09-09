@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "node generate-demo-deck.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}
