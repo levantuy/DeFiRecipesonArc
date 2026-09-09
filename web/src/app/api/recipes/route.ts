@@ -54,7 +54,7 @@ const MAX_DCA_SLIPPAGE_BPS = 1000;
 type DcaExecutionMode = 'PREFUND' | 'PULL';
 
 function getKeeperApiBaseUrl() {
-  const configured = process.env.KEEPER_API_BASE_URL || process.env.NEXT_PUBLIC_KEEPER_API_BASE_URL;
+  const configured = process.env.KEEPER_API_BASE_URL;
   return (configured || DEFAULT_KEEPER_API_BASE_URL).trim().replace(/\/$/, '');
 }
 
