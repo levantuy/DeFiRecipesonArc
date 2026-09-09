@@ -1,5 +1,4 @@
 export interface Dictionary {
-  navAudited: string;
   navArcTestnet: string;
   navWrongNetwork: string;
   navLanguage: string;
@@ -104,7 +103,6 @@ export interface Dictionary {
   cumulativeGas: string;
   gasSummary: string;
   auditLogs: string;
-  auditedProxy: string;
   userAddressFilter: string;
   apply: string;
   clear: string;

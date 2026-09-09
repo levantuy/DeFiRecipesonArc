@@ -20,6 +20,8 @@ import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { FooterLinkIcon } from './layout-icons';
+import { APP_VERSION, footerLinks } from './layout-config';
 
 const DEFAULT_MAX_USDC_SPEND_PER_TX = '500';
 const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
@@ -1405,8 +1407,25 @@ export default function Home() {
         isConfirming={isActivating || isUpdatingDelegation}
       />
 
-      <footer className="border-t border-slate-800/80 py-6 text-center text-xs text-slate-500 font-mono">
-        {t('footer')}
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-surface/80 px-4 py-2 text-sm text-muted sm:px-5">
+        <span>© 2026 Defi Recipes. All rights reserved.</span>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{APP_VERSION}</span>
+          {footerLinks.map((link) => (
+            <a
+              key={link.id}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted transition hover:bg-surface-alt hover:text-primary"
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={link.label}
+              aria-label={link.label}
+            >
+              <FooterLinkIcon id={link.id} className="h-3.5 w-3.5" />
+              <span>{link.label}</span>
+            </a>
+          ))}
+        </div>
       </footer>
     </div>
   );

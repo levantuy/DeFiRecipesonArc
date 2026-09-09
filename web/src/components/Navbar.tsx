@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ShieldCheck, Zap } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import { useChainId } from 'wagmi';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
@@ -21,10 +21,6 @@ export const Navbar: React.FC = () => {
         </div>
         <div>
           <h1 className="text-xl font-bold gradient-text">DeFi Recipes on Arc</h1>
-          <div className="flex items-center space-x-2 text-xs text-slate-400">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-            <span>{t('navAudited')}</span>
-          </div>
         </div>
       </div>
 

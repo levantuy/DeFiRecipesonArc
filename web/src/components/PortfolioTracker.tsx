@@ -390,7 +390,6 @@ const PortfolioTrackerContent: React.FC = () => {
             <History className="h-5 w-5 text-blue-400" />
             <span>{t('auditLogs')}</span>
           </h3>
-          <span className="text-xs text-slate-400 font-mono">{t('auditedProxy')}</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
