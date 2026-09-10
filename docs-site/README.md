@@ -43,6 +43,9 @@ pnpm start
 > `node .next/standalone/server.js` for production deployments — `pnpm build && pnpm start`
 > remains fine for local verification.
 
-`next.config.mjs` sets `output: 'standalone'`, so `pnpm build` produces a self-contained
-`.next/standalone` bundle suitable for deployment to any Node host (e.g. behind
-`docs.defirecipes.com`) independent of the other apps in this repository.
+`next.config.mjs` sets `output: 'standalone'` for self-hosted Node/Docker deployments, which
+produces a self-contained `.next/standalone` bundle. This is skipped automatically when the
+`VERCEL` environment variable is present, since Vercel performs its own output tracing and
+fails the build (`ENOENT ... next-server.js.nft.json`) if `output: 'standalone'` is left on.
+Either way, this app builds and deploys independently of the other apps in this repository —
+point Vercel (or any other host) at `docs-site/` as the project root for `docs.defirecipes.com`.
