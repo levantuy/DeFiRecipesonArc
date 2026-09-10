@@ -20,7 +20,7 @@ function appLink(envKey: string, fallback: string): string {
 
 export const footerLinks: FooterLink[] = [
   { id: "x", label: "X", href: appLink("NEXT_PUBLIC_APP_LINK_X", "https://x.com/defirecipes") },
-  { id: "discord", label: "Discord", href: appLink("NEXT_PUBLIC_APP_LINK_DISCORD", "https://discord.gg/tuylv") },
+  { id: "discord", label: "Discord", href: appLink("NEXT_PUBLIC_APP_LINK_DISCORD", "https://discord.gg/BRHdeUnAq") },
   { id: "github", label: "GitHub", href: appLink("NEXT_PUBLIC_APP_LINK_GITHUB", "https://github.com/levantuy") },
   { id: "documentation", label: "Documentation", href: appLink("NEXT_PUBLIC_APP_LINK_DOCUMENTATION", "https://docs.defirecipes.com") },
 ];
