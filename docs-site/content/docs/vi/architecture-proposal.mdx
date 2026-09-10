@@ -13,6 +13,20 @@ DeFi Recipes on Arc là lớp tự động hóa yield và workflow tài chính p
 2. **Scoped session key delegation:** keeper chỉ có quyền tạm thời, bị giới hạn theo target, selector và thời hạn.
 3. **Mô phỏng trước khi thực thi:** keeper dùng `eth_call` để từ chối giao dịch lỗi hoặc vượt ngưỡng trước khi broadcast.
 4. **Tính toàn vẹn hai góc nhìn USDC:** số dư ERC-20 6 decimals được tách biệt với USDC dùng cho phép toán gas native.
+
+## Quy ước USDC raw amount
+
+USDC ERC-20 trên Arc sử dụng **6 decimals**. Các giá trị `uint256` trong event, calldata, balance và allowance là raw/base units:
+
+| Giá trị hiển thị | Raw/base units |
+| ---: | ---: |
+| `1 USDC` | `1,000,000` |
+| `$5 USDC` | `5,000,000` |
+| `$50 USDC` | `50,000,000` |
+
+Vì vậy, một lượt DCA `$5` phải truyền on-chain giá trị `5,000,000`, nhưng UI và log nghiệp vụ phải hiển thị **`5 USDC`**. Không được hiển thị `5,000,000 USDC`; nếu cần hiển thị giá trị kỹ thuật, phải ghi rõ `5,000,000 raw USDC (5 USDC)`. Dùng `bigint` hoặc phép tính decimal-safe khi chuyển đổi và chỉ format tại lớp hiển thị.
+
+Tham chiếu: [Arc USDC System Events](https://docs.arc.io/arc/references/usdc-system-events#erc-20-usdc-contract-events).
 5. **Tương thích EVM Paris:** contract dùng mục tiêu `paris` để tương thích Arc Testnet.
 
 ## Các lớp hệ thống

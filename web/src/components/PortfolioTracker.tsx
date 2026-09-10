@@ -7,6 +7,7 @@ import { formatUnits } from 'viem';
 import { useAccount, useBalance } from 'wagmi';
 
 import { CONTRACT_ADDRESSES } from '../config/contracts';
+import { formatUsdcDecimal } from '@/lib/dcaConfig';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
 interface AuditLog {
@@ -292,14 +293,17 @@ const PortfolioTrackerContent: React.FC = () => {
     if (!usdcBalanceData) {
       return null;
     }
-    return Number(formatUnits(usdcBalanceData.value, usdcBalanceData.decimals));
+    return formatUnits(usdcBalanceData.value, usdcBalanceData.decimals);
   }, [usdcBalanceData]);
 
   const totalUsdcBalanceDisplay = useMemo(() => {
     if (totalUsdcBalance === null) {
       return { whole: '--', fraction: '--' };
     }
-    return splitUsdDisplay(totalUsdcBalance, 2, locale);
+    const formatted = formatUsdcDecimal(totalUsdcBalance, { locale, maximumFractionDigits: 2 });
+    const separator = locale === 'vi-VN' ? ',' : '.';
+    const [whole = '0', fraction = '00'] = formatted.split(separator);
+    return { whole, fraction: fraction.padEnd(2, '0') };
   }, [locale, totalUsdcBalance]);
 
   const totalGasUsedDisplay = useMemo(() => splitUsdDisplay(totalGasUsedUsdc, 2, locale), [locale, totalGasUsedUsdc]);

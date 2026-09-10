@@ -6,6 +6,7 @@ import { CheckCircle2, AlertTriangle, ArrowRight, ShieldAlert, X } from 'lucide-
 import {
   DcaExecutionMode,
   estimateDcaRuns,
+  formatUsdcBaseUnits,
   parseDcaActivationConfig,
   parseUsdcAmountToBaseUnits,
 } from '@/lib/dcaConfig';
@@ -336,19 +337,19 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                           <div className="space-y-1">
                             <div>{t('runtimeSpender')}: <span className="font-mono text-white break-all">{allowanceCheck.runtimeSpender}</span></div>
                             <div>{t('targetProtocol')}: <span className="font-mono text-white break-all">{allowanceCheck.targetProtocolAddress}</span></div>
-                            <div>{t('allowanceNow')}: <span className="font-mono text-white">{allowanceCheck.currentAllowanceBaseUnits}</span> {t('baseUnits')}</div>
+                            <div>{t('allowanceNow')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.currentAllowanceBaseUnits)} USDC</span></div>
                             {allowanceCheck.requiredSpenders && allowanceCheck.requiredSpenders.length > 0 ? (
                               <div>
                                 {t('requiredApprovals')}:
                                 {allowanceCheck.requiredSpenders.map((spender) => (
                                   <div key={spender} className="font-mono text-white break-all">
-                                    {spender} : {allowanceCheck.allowanceBySpender?.[spender.toLowerCase()] || '0'}
+                                    {spender} : {formatUsdcBaseUnits(allowanceCheck.allowanceBySpender?.[spender.toLowerCase()] || '0')} USDC
                                   </div>
                                 ))}
                               </div>
                             ) : null}
-                            <div>{t('requiredScheduler')}: <span className="font-mono text-white">{allowanceCheck.requiredForSchedulerBaseUnits}</span></div>
-                            <div>{t('requiredActivation')}: <span className="font-mono text-white">{allowanceCheck.requiredForActivationBaseUnits}</span></div>
+                            <div>{t('requiredScheduler')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.requiredForSchedulerBaseUnits)} USDC</span></div>
+                            <div>{t('requiredActivation')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.requiredForActivationBaseUnits)} USDC</span></div>
                             <div className={allowanceCheck.isEnoughForScheduler ? 'text-emerald-300' : 'text-amber-200'}>
                               {t('schedulerReadiness')}: {allowanceCheck.isEnoughForScheduler ? t('ready') : t('notReady')}
                             </div>

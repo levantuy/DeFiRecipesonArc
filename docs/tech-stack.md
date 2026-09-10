@@ -155,7 +155,7 @@ Giao diện Web cung cấp trải nghiệm quản lý tự động hóa mượt 
     * Tỷ lệ trượt giá tối đa (Max Slippage).
     * Cảnh báo rủi ro thị trường liên quan.
 * **Bảng điều khiển Portfolio & Audit Logs:**
-  * Hiển thị số dư USDC real-time (sử dụng 6 decimals ERC-20 view).
+  * Hiển thị số dư USDC real-time sau khi quy đổi từ raw/base units theo 6 decimals của ERC-20 view. Ví dụ: `5,000,000` raw units phải hiển thị là `5 USDC`, không phải `5,000,000 USDC`.
   * Biểu đồ theo dõi lợi suất tích lũy từ luồng Auto-Compounder và hiệu suất tích lũy tài sản của luồng Recurring DCA.
   * Bảng Audit Log chi tiết lịch sử từng lần Keeper thực thi giao dịch tự động.
 

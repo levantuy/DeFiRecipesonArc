@@ -16,6 +16,21 @@ Nền tảng hoạt động như một **lớp tự động hoá công việc De
 
 **Token Scope (Testnet):** Chỉ hỗ trợ các token thử nghiệm trên Arc Testnet gồm `USDC`, `EURC`, `cirBTC`.
 
+### Quy ước đơn vị USDC (Raw/Base Units và Giá trị hiển thị)
+
+USDC sử dụng **6 decimals**. Mọi giá trị `uint256` trong event, calldata, allowance, balance và smart contract đều là **raw/base units**, không phải số USDC để hiển thị cho người dùng:
+
+| Giá trị hiển thị | Giá trị on-chain (raw/base units) |
+| ---: | ---: |
+| `1 USDC` | `1,000,000` |
+| `$5 USDC` | `5,000,000` |
+| `$50 USDC` | `50,000,000` |
+| `$500 USDC` | `500,000,000` |
+
+Quy đổi: `displayUsdc = rawAmount / 10^6` và `rawAmount = displayUsdc * 10^6`. Ví dụ, DCA `$5` mỗi lần phải được lưu/truyền on-chain là `5,000,000`, nhưng UI, log nghiệp vụ và tài liệu dành cho người dùng phải hiển thị là **`5 USDC`** hoặc **`$5 USDC`**, không hiển thị `5000000 USDC`. Code phải dùng kiểu số an toàn (`bigint` hoặc thư viện decimal) cho raw amount; chỉ format ở ranh giới hiển thị.
+
+Tham chiếu: [Arc USDC System Events](https://docs.arc.io/arc/references/usdc-system-events#erc-20-usdc-contract-events).
+
 ### Phân kỳ Phát triển (Phased Scope)
 * **Phase 1 (MVP P0):** 
   * 2 Recipes cốt lõi: **USDC Yield Auto-Compounder** và **USDC -> EURC Recurring DCA**.
@@ -218,7 +233,7 @@ sequenceDiagram
 ```
 
 * **Tham số Đầu vào (Input Parameters):**
-  * `minRewardThreshold`: Lượng reward tối thiểu để kích hoạt compound (mặc định: `5000000` = 5 USDC).
+  * `minRewardThreshold`: Lượng reward tối thiểu để kích hoạt compound (giá trị nghiệp vụ: `5 USDC`; giá trị on-chain: `5,000,000` raw/base units).
   * `maxSlippageBps`: Ngưỡng trượt giá tối đa tính theo điểm cơ bản (mặc định: `50` = 0.5%).
   * `checkIntervalHours`: Chu kỳ kiểm tra của Keeper (mặc định: 24 giờ).
 * **Xử lý Lỗi & Ngoại lệ (Edge Cases):**
@@ -239,7 +254,7 @@ sequenceDiagram
   4. Thực hiện Swap USDC $\rightarrow$ EURC theo route của Arc App Kit Swap với `minEurcOut`.
   5. Chuyển thẳng số EURC thu được về ví cá nhân của người dùng.
 * **Tham số Đầu vào (Input Parameters):**
-  * `dcaAmountUsdc`: Số tiền USDC cho mỗi lần mua (vd: `50000000` = 50 USDC).
+  * `dcaAmountUsdc`: Số tiền USDC cho mỗi lần mua (giá trị nghiệp vụ: `5 USDC`; giá trị on-chain tương ứng: `5,000,000` raw/base units). Nếu cấu hình `$50`, giá trị on-chain là `50,000,000` raw/base units.
   * `targetAssetSymbol`: Ký hiệu token đích trên Arc Testnet (`EURC` mặc định, chỉ chấp nhận `USDC` / `EURC` / `cirBTC` ở tầng validate cấu hình).
   * `frequency`: Chu kỳ mua (`WEEKLY` / `MONTHLY`).
   * `maxSlippageBps`: Trượt giá cho phép (`50` = 0.5%).

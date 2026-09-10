@@ -129,7 +129,6 @@ export interface Dictionary {
   failedToCheckAllowance: string;
   invalidDcaConfig: string;
   estimatedRunsZero: string;
-  baseUnits: string;
   eachExecutionUses: string;
   inMode: string;
   sessionKeyRegistryLabel: string;

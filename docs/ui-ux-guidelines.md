@@ -17,10 +17,17 @@ Tự động hóa DeFi đòi hỏi tính minh bạch cao, loại bỏ sự mơ h
 
 ## 2. Quy chuẩn UX Đặc thụ trên Arc Network
 
+### 2.0. Hiển thị giá trị USDC và raw amount
+- USDC có **6 decimals**. Giá trị đọc từ event, balance, allowance hoặc calldata có thể là raw/base units; không được hiển thị trực tiếp cho người dùng.
+- Ví dụ bắt buộc được phân biệt rõ: `$5 USDC` = `5,000,000` raw/base units; `$50 USDC` = `50,000,000` raw/base units.
+- UI phải hiển thị giá trị đã quy đổi, có dấu phân cách hàng nghìn và đơn vị rõ ràng: `5 USDC`, `50 USDC`, `1,250.50 USDC`.
+- Nếu cần hiển thị giá trị kỹ thuật, dùng nhãn `Raw amount` hoặc `Base units`, ví dụ: `5,000,000 (raw USDC; 5 USDC)`.
+- Không dùng `Number()` hoặc phép chia floating-point cho raw USDC lớn. Dùng `bigint`/decimal-safe conversion rồi format tại lớp UI; không làm thay đổi giá trị giao dịch.
+
 ### 2.1. Hiển thị Phí Gas USDC (USDC Native Gas Display)
 - **Hiển thị nhất quán:** Mọi nơi tính toán phí gas phải ghi rõ biểu tượng `USDC` (ví dụ: `Est. Gas: ~0.0042 USDC`). Tuyệt đối không hiển thị `Gwei` hay `ETH`.
 - **Hiển thị Số dư USDC (ERC-20 View vs Gas View):**
-  - Trên Wallet Bar / Header: Hiển thị số dư USDC khả dụng với **6 chữ số thập phân** (ví dụ: `1,250.50 USDC`).
+  - Trên Wallet Bar / Header: Hiển thị số dư USDC khả dụng sau khi chia theo 6 decimals, có phân cách hàng nghìn (ví dụ: raw `1,250,500,000` hiển thị `1,250.50 USDC`).
   - Trong Transaction Confirmation: Cảnh báo nếu số dư USDC khả dụng nhỏ hơn phí gas ước tính.
 
 ### 2.2. Quy chuẩn Trạng thái Kết nối Ví (Wallet Connection Flow)
@@ -42,8 +49,8 @@ Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Comp
 |  [Simulating Recipe Execution...]                [X] Close  |
 +-------------------------------------------------------------+
 |  ROUTING & ASSET FLOW                                       |
-|  [1. User Wallet] Reserve 50 USDC for recurring execution   |
-|  [2. Arc App Kit Swap] Swap 50 USDC -> EURC                 |
+|  [1. User Wallet] Reserve 5 USDC for recurring execution    |
+|  [2. Arc App Kit Swap] Swap 5 USDC -> EURC                  |
 |  [3. Delivery] Transfer EURC to user wallet                 |
 +-------------------------------------------------------------+
 |  PARAMETERS & PROTECTION                                    |
