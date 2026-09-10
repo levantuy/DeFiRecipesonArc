@@ -1,0 +1,309 @@
+---
+title: Overview of the core smart contracts in DeFi Recipes on Arc
+description: The role of SessionKeyRegistry, RecipeGuardrail, and SharedExecutorProxy in the DeFi automation system on Arc Testnet.
+---
+
+This document explains in detail the role of the core contracts used in the DeFi automation system on Arc Testnet. The three most important contracts are:
+
+- `SessionKeyRegistry`
+- `RecipeGuardrail`
+- `SharedExecutorProxy`
+
+The addresses currently configured in the frontend's environment file are:
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+---
+
+## 1. Architecture overview
+
+The project does not allow a keeper or bot to run with free rein over asset control. Instead, the system splits responsibility into three clear layers:
+
+1. `SessionKeyRegistry` – stores and validates delegation (session key) permissions
+2. `RecipeGuardrail` – enforces security constraints: protocol whitelist, function selector whitelist, slippage limits
+3. `SharedExecutorProxy` – the central execution point for every recipe; it receives commands from the keeper, checks permissions, and then calls into an approved protocol
+
+In short:
+
+- users retain ownership of their assets
+- the keeper may only execute within the scope it was granted
+- every action must pass through a fixed set of security controls
+
+This is the core model described in the [project vision](./project-vision.mdx) and the [architecture proposal](./architecture-proposal.mdx).
+
+---
+
+## 2. Contract 1: SessionKeyRegistry
+
+### 2.1. Purpose
+
+`SessionKeyRegistry` stores information about the session keys users grant to the keeper or automation engine. It acts like a "permissions ledger" that lets the system know:
+
+- which session key is currently valid
+- which user granted that session key
+- when the session key expires
+- the maximum USDC a single execution can spend
+- whether the session key has been revoked or disabled
+
+### 2.2. Role in the system
+
+This contract helps the system uphold the principle of "never give a bot unrestricted transfer rights." Instead of handing a private key to the keeper, users grant only a short-lived, tightly scoped session key.
+
+The key data this contract manages typically includes:
+
+- `userAddress`
+- `sessionPublicKey`
+- `validUntil`
+- `allowedTarget`
+- `allowedSelectors`
+- `usdcSpendLimitPerTx`
+
+### 2.3. Why this contract matters
+
+Without `SessionKeyRegistry`, the system would lose its input-control layer. The keeper would act as an "unchecked agent" that could execute actions beyond its intended scope. With `SessionKeyRegistry` in place, every execution request must first be checked against the session key's state.
+
+### 2.4. What the address means
+
+Current address:
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+```
+
+This is the Arc Testnet address the frontend and keeper use to:
+
+- read delegation state
+- verify whether a session key is still active
+- check spend limits
+- confirm the user has granted permission to the keeper
+
+### 2.5. Example usage flow
+
+1. The user signs a session key to manage a recipe
+2. The keeper acts as the user's delegate
+3. When execution is needed, the keeper calls `SharedExecutorProxy`
+4. `SharedExecutorProxy` reads data from `SessionKeyRegistry`
+5. If the session key is still valid, the contract proceeds
+6. If it has expired or been revoked, the transaction is rejected
+
+---
+
+## 3. Contract 2: RecipeGuardrail
+
+### 3.1. Purpose
+
+`RecipeGuardrail` is the security layer for every executed transaction. It acts as the system's "checkpoint."
+
+This contract checks the following conditions:
+
+- whether the target protocol is whitelisted
+- whether the function selector being called is whitelisted
+- whether `minAmountOut` / slippage stays within a safe range
+- whether the transaction exceeds a risk threshold
+
+### 3.2. Role in the system
+
+If `SharedExecutorProxy` is where execution commands are received, `RecipeGuardrail` is where the system decides whether that command is allowed to proceed. It's the layer that blocks dangerous calls.
+
+A short example:
+
+- A keeper wants to call `deposit()` on Arc Lending
+- `SharedExecutorProxy` asks `RecipeGuardrail`: "is this address allowed?"
+- If it's a whitelisted protocol with a valid function selector, execution continues
+- Otherwise, it reverts immediately
+
+### 3.3. Main protective constraints
+
+This contract typically performs the following checks:
+
+- `isWhitelistedProtocol(address protocol)`
+- `isSelectorAllowed(address protocol, bytes4 selector)`
+- `minAmountOut` validation
+- slippage and price impact validation
+- blocking direct calls to disallowed functions
+
+This avoids blindly calling into arbitrary contracts, and is why the project focuses on "whitelist only" rather than "every contract is open."
+
+### 3.4. What the address means
+
+Current address:
+
+```dotenv
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+```
+
+This address is used to:
+
+- check which protocols are allowed to participate in a recipe
+- manage the whitelist of function selectors
+- determine valid call targets
+- block unsafe steps in a workflow
+
+### 3.5. Why is this contract critical?
+
+Because it is the last line of defense before the system touches a real DeFi protocol. Without `RecipeGuardrail`, a keeper could attempt to call functions or contracts outside its permitted scope.
+
+---
+
+## 4. Contract 3: SharedExecutorProxy
+
+### 4.1. Purpose
+
+`SharedExecutorProxy` is the system's "central contract." It acts as an orchestrator. Every recipe passes through it instead of each recipe having its own dedicated contract.
+
+Its responsibilities include:
+
+- receiving execution requests from the keeper or automation service
+- validating the session key / permissions
+- checking whether the user has granted execution rights
+- calling `RecipeGuardrail` for further validation
+- executing the next valid step against a whitelisted protocol
+- ensuring transfer rights stay within the granted scope
+
+### 4.2. Why call it a "Proxy"?
+
+Because it is a "central, shared, reusable" contract, not a dedicated contract per recipe. This provides:
+
+- a smaller smart contract attack surface
+- easier management and auditing
+- the ability to add new recipes without deploying many new contracts
+- fewer, isolated points of risk
+
+### 4.3. Role in the execution flow
+
+The typical flow works as follows:
+
+1. The user grants a session key and delegates to the keeper
+2. The keeper detects when a recipe needs to run
+3. The keeper sends a request to `SharedExecutorProxy`
+4. `SharedExecutorProxy` checks the session key in `SessionKeyRegistry`
+5. `SharedExecutorProxy` calls `RecipeGuardrail` to confirm the target and function are valid
+6. If valid, the contract executes the step on the protocol, such as lending or a swap
+7. If invalid, the transaction reverts
+
+### 4.4. What the address means
+
+Current address:
+
+```dotenv
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+This is the address the frontend, keeper, and runtime config use to:
+
+- send recipe execution requests
+- verify the session key's delegated permissions
+- link to `SessionKeyRegistry` and `RecipeGuardrail`
+- orchestrate the protocol-level steps
+
+### 4.5. Why is this the heart of the system?
+
+Because all critical execution logic is centralized here. If this contract is the "control station," then `RecipeGuardrail` is the "security checkpoint," and `SessionKeyRegistry` is the "permissions ledger." These three parts operate as a single unified system.
+
+---
+
+## 5. How the three contracts relate to each other
+
+The three contracts follow this chain of validation and control:
+
+```text
+User
+   |
+   | grants a session key / delegation
+   v
+SessionKeyRegistry
+   |
+   | verifies the session is still valid and within spend limits
+   v
+SharedExecutorProxy
+   |
+   | checks whether the request is valid
+   v
+RecipeGuardrail
+   |
+   | whitelist: protocol + function + slippage
+   v
+Allowed protocol (Arc Lending / App Kit Swap)
+```
+
+In short:
+
+- `SessionKeyRegistry` answers: "is this permission valid?"
+- `RecipeGuardrail` answers: "is this safe to execute?"
+- `SharedExecutorProxy` answers: "if valid, how should it be executed?"
+
+---
+
+## 6. Why does the project need three contracts instead of one?
+
+Separating responsibilities makes the system clearer and safer:
+
+- `SessionKeyRegistry`: manages permissions
+- `RecipeGuardrail`: manages security constraints
+- `SharedExecutorProxy`: executes actions
+
+Bundling everything into a single contract would make the code hard to control, hard to audit, and error-prone whenever a new recipe is added. Separation improves maintainability, readability, testability, and upgradability.
+
+---
+
+## 7. Real-world example: the USDC Yield Auto-Compounder recipe
+
+When the Auto-Compounder recipe runs, the logic flows through the contracts in this order:
+
+1. The keeper checks accumulated rewards
+2. The keeper builds an execution request
+3. `SharedExecutorProxy` confirms the session key is still valid
+4. `RecipeGuardrail` confirms the protocol, selector, and slippage are valid
+5. `SharedExecutorProxy` calls Arc Lending to claim the reward
+6. `SharedExecutorProxy` calls App Kit Swap to swap the reward token into USDC
+7. `SharedExecutorProxy` redeposits the USDC into lending
+8. It records/emits an event so the dashboard can show the status
+
+In this example, the user never has to withdraw funds manually or submit a manual transaction. Every step follows the delegation and security-control mechanism.
+
+---
+
+## 8. Important notes when using these addresses
+
+These contract addresses are a critical part of the frontend and keeper runtime. If an address is wrong or doesn't match the on-chain deployment, the system will:
+
+- fail to validate session keys
+- fail to read the correct contract state
+- be unable to execute recipes
+- risk a mismatch between the frontend and on-chain state
+
+Therefore, whenever deploying or making changes, always ensure:
+
+- `NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS` matches the contract deployed on Arc Testnet
+- `NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS` matches the real guardrail contract
+- `NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS` matches the real execution proxy
+
+---
+
+## 9. Conclusion
+
+The project's three core contracts form a three-layer control system:
+
+- `SessionKeyRegistry`: permissions
+- `RecipeGuardrail`: security and whitelisting
+- `SharedExecutorProxy`: centralized execution
+
+With this architecture, the project achieves its core goal: enabling DeFi automation on Arc while preserving non-custodial principles, scoped control, and reduced financial risk for users.
+
+From an investment and security standpoint, this is a sound model because it separates permissions, protocol control, and action execution into distinct layers, instead of having a single piece of code do everything at once.
+
+---
+
+## 10. Currently used addresses
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+These three addresses represent the three "pillars" of the DeFi Recipes system on Arc: delegated permissions, security constraints, and centralized execution.

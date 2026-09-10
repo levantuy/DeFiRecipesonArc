@@ -1,0 +1,59 @@
+---
+title: Project Vision
+description: Vision, goals, and MVP scope of DeFi Recipes on Arc.
+---
+
+# DeFi Recipes on Arc
+
+## Project Vision v2.1
+
+> Automated, secure, and reliable DeFi workflows on Arc.
+
+**Network:** Arc Testnet (Chain ID `5042002`)
+
+## Summary
+
+DeFi Recipes on Arc provides a non-custodial automation layer for financial workflows on Arc. Users never hand private keys to the keeper; instead, the keeper only receives a scoped grant of permissions to execute pre-approved actions.
+
+The MVP focuses on the execution core, smart contract security, and two official, tightly scoped recipes. The marketplace, visual builder, and community features are left for later phases.
+
+## Vision
+
+Turn recurring DeFi automation on Arc into an experience as simple, safe, and transparent as a single transaction.
+
+## Mission
+
+Eliminate repetitive manual DeFi operations with automated, non-custodial workflows that are audited and optimized for USDC on Arc.
+
+## Core principles
+
+1. **Security and execution first:** protecting user assets matters more than demo-only features.
+2. **Non-custodial, scoped delegation:** a session key is only valid for a limited time, a limited set of call targets, and a limited spend cap.
+3. **Transparency and simulation:** every recipe publicly documents its execution steps, trigger conditions, and protocols used; the system simulates before activation.
+4. **Whitelisted protocols only:** call targets and swap routes must be pre-approved.
+
+## Two official MVP recipes
+
+### USDC Yield Auto-Compounder
+
+A recipe that deposits USDC into Arc Lending, tracks rewards, claims on a schedule, swaps rewards back to USDC, and redeposits. Expected risk level: low.
+
+### USDC to EURC Recurring DCA
+
+A recipe that converts a pre-configured amount of USDC into EURC on a weekly or monthly schedule, enforces a slippage limit, and returns EURC to the user's wallet. Expected risk level: low to medium.
+
+## Security model
+
+```text
+User wallet
+  -> Scoped session key
+  -> Automation Keeper Engine
+  -> Shared Executor Contract
+  -> Whitelisted Arc protocol
+```
+
+The shared executor reduces the attack surface by routing everything through a single, audited execution point. Keeper permissions are constrained by function selector, protocol address, and input thresholds; slippage and price impact are enforced at every step. Users can always revoke delegation or stop a recipe.
+
+## MVP scope
+
+The MVP includes two official recipes, the shared executor, cron- and event-driven keepers, a quick-activation dashboard, and on-chain simulation before every run. The visual recipe builder, permissionless marketplace, recipe forking, and trust score are reserved for future phases.

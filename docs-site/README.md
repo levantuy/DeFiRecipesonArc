@@ -1,36 +1,100 @@
 # DeFi Recipes on Arc — Documentation Site
 
-Standalone [Fumadocs](https://fumadocs.dev) + Next.js documentation app. It is intentionally
-independent from `web/` and `keeper/` in this monorepo — it has its own `package.json`,
-lockfile-free install, and build output, so it can be deployed on its own to
-`docs.defirecipes.com` without depending on the rest of the workspace.
+Ứng dụng [Fumadocs](https://fumadocs.dev) + Next.js độc lập, tách biệt hoàn toàn khỏi `web/` và
+`keeper/` trong monorepo này — có `package.json` riêng và build output riêng, có thể triển khai
+độc lập lên `docs.defirecipes.com`.
 
-## What it uses
+Trang tài liệu hỗ trợ đầy đủ **hai ngôn ngữ**: tiếng Anh (`en`) và tiếng Việt (`vi`).
 
-- **Fumadocs UI** (`fumadocs-ui`) for the docs layout, responsive sidebar/navigation,
-  table of contents with active-section highlighting, and built-in search UI.
-- **Fumadocs MDX** (`fumadocs-mdx`) to load Markdown/MDX from [content/docs](content/docs)
-  and to configure Shiki syntax highlighting for `solidity`, `dotenv`, `text`, and a few
-  other common languages (see [source.config.ts](source.config.ts)).
-- **Fumadocs Core** (`fumadocs-core`) for the page-tree loader and the search API route.
-- Tailwind CSS v4 (CSS-first config) for styling, layered on top of Fumadocs' own stylesheet.
+## Kiến trúc i18n
 
-No custom docs layout, sidebar, or search implementation was built — all of that is provided
-by Fumadocs. Content is Vietnamese and kept with full diacritics as-is.
+- Locale mặc định là `en`. URL luôn có tiền tố locale rõ ràng: `/en/docs/...` hoặc `/vi/docs/...`.
+- `proxy.ts` (dùng `createI18nMiddleware` của `fumadocs-core/i18n/middleware`) tự động thêm tiền
+  tố locale còn thiếu. Một URL cũ không có locale (ví dụ `/docs/contracts-overview`, hoặc `/`) sẽ
+  được chuyển hướng sang locale phù hợp nhất theo header `Accept-Language`, và về `en` nếu trình
+  duyệt không khai báo ưu tiên ngôn ngữ nào khớp.
+- `app/[lang]/page.tsx` chuyển hướng `/{lang}` sang trang tổng quan mặc định
+  `/{lang}/docs/contracts-overview`.
+- Cấu hình locale dùng chung (danh sách ngôn ngữ, locale mặc định, tên hiển thị) nằm ở một nơi
+  duy nhất: [lib/i18n.ts](lib/i18n.ts), được `proxy.ts`, `lib/source.ts` và `RootProvider` cùng
+  sử dụng — không có nhánh rẽ theo ngôn ngữ nào bị lặp lại rải rác trong code.
 
-## Local development
+## Cấu trúc nội dung theo locale
+
+```
+content/docs/
+  en/
+    meta.json
+    contracts-overview.mdx
+    project-vision.mdx
+    architecture-proposal.mdx
+  vi/
+    meta.json
+    contracts-overview.mdx
+    project-vision.mdx
+    architecture-proposal.mdx
+```
+
+Mỗi locale có cây điều hướng (`meta.json`) và nội dung MDX hoàn toàn riêng biệt — điều hướng của
+tiếng Anh không bao giờ lẫn với tiếng Việt hoặc ngược lại. `lib/source.ts` nạp cả hai bằng
+`loader()` của `fumadocs-core/source` với `i18n` (`parser: 'dir'`), nên `source.pageTree[lang]`
+và `source.getPage(slug, lang)` luôn trả về đúng dữ liệu của locale được yêu cầu.
+
+## Thêm một trang mới bằng cả hai ngôn ngữ
+
+1. Tạo `content/docs/en/<slug>.mdx` với frontmatter `title`/`description` bằng tiếng Anh.
+2. Tạo `content/docs/vi/<slug>.mdx` với **cùng `<slug>`** và frontmatter bằng tiếng Việt.
+3. Thêm `<slug>` vào `pages` của cả `content/docs/en/meta.json` và `content/docs/vi/meta.json`
+   (thứ tự có thể khác nhau giữa hai locale nếu cần, nhưng slug phải giống hệt nhau).
+4. Khi liên kết chéo giữa các trang tài liệu, dùng đường dẫn file tương đối, ví dụ
+   `[...](./project-vision.mdx)`, thay vì đường dẫn tuyệt đối `/docs/...` — Fumadocs sẽ tự resolve
+   sang đúng URL có tiền tố locale hiện tại.
+
+**Quy ước slug:** slug của một trang phải giống hệt nhau ở `en` và `vi` (ví dụ
+`contracts-overview` ở cả hai thư mục). Đây là điều kiện để bộ chuyển ngôn ngữ giữ nguyên trang
+đang xem khi đổi locale; nếu một locale chưa có trang tương ứng, bộ chuyển ngôn ngữ sẽ tự động
+đưa người dùng về trang tổng quan (`contracts-overview`) của locale đó thay vì báo lỗi 404.
+
+Không dịch sai các thuật ngữ kỹ thuật (Arc, USDC, smart contract, session key, keeper, whitelist,
+slippage, Chain ID...); giữ nguyên code block, địa chỉ contract và các giá trị kỹ thuật giữa hai
+bản dịch.
+
+## Local development và kiểm tra language switcher
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-The site starts at `http://localhost:3000` and redirects to `/docs/contracts-overview`.
+Trang chạy tại `http://localhost:3000` và chuyển hướng sang `/en/docs/contracts-overview`.
 
-## Adding more pages
+Để kiểm tra bộ chuyển ngôn ngữ:
 
-Add `.mdx` files under `content/docs/` and list them in `content/docs/meta.json` to control
-sidebar order. Each page needs `title`/`description` frontmatter.
+1. Mở `/en/docs/project-vision`, bấm nút chọn ngôn ngữ ở thanh điều hướng (hiển thị trên cả
+   desktop và mobile) và chọn "Vietnamese" — trang phải chuyển sang `/vi/docs/project-vision`
+   (giữ nguyên slug).
+2. Ở `/vi/docs/project-vision`, chuyển lại sang "English" phải quay về
+   `/en/docs/project-vision`.
+3. Vào một slug chỉ tồn tại ở một locale (nếu có) và đổi sang locale còn lại — phải rơi về trang
+   tổng quan (`contracts-overview`) của locale đó thay vì lỗi 404.
+4. Kiểm tra `<html lang="...">` trong DevTools khớp với locale đang xem.
+5. Truy cập `/docs/contracts-overview` (không có tiền tố locale) — phải được chuyển hướng sang
+   locale phù hợp.
+
+## Những gì trang này dùng
+
+- **Fumadocs UI** (`fumadocs-ui`) cho layout tài liệu, sidebar responsive, mục lục (TOC) với
+  active-section highlighting, ô tìm kiếm tích hợp, và bộ chuyển ngôn ngữ tích hợp sẵn
+  (`RootProvider` với `i18n`).
+- **Fumadocs MDX** (`fumadocs-mdx`) để nạp Markdown/MDX từ [content/docs](content/docs) và cấu
+  hình Shiki syntax highlighting cho `solidity`, `dotenv` và một số ngôn ngữ khác (xem
+  [source.config.ts](source.config.ts)).
+- **Fumadocs Core** (`fumadocs-core`) cho bộ nạp page-tree đa locale (`fumadocs-core/source`),
+  middleware định tuyến locale (`fumadocs-core/i18n/middleware`), và API tìm kiếm.
+- Tailwind CSS v4 (CSS-first config) để style, chồng lên stylesheet của Fumadocs.
+
+Không có sidebar, search hay locale-switcher tự viết tay — tất cả đều dùng khả năng có sẵn của
+Fumadocs, không thêm dependency mới.
 
 ## Build & deploy
 

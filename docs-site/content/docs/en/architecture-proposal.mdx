@@ -1,0 +1,49 @@
+---
+title: Architecture Proposal
+description: System architecture and technical principles of DeFi Recipes on Arc.
+---
+
+# DeFi Recipes on Arc — Architecture Proposal
+
+## Design philosophy
+
+DeFi Recipes on Arc is a non-custodial yield and financial workflow automation layer for Arc. The architecture is built around five principles:
+
+1. **Shared Executor Proxy:** every workflow passes through an audited `SharedExecutorProxy`.
+2. **Scoped session key delegation:** the keeper only holds a temporary grant, constrained by target, selector, and expiry.
+3. **Simulation before execution:** the keeper uses `eth_call` to reject failing or over-threshold transactions before broadcasting.
+4. **Dual-view USDC integrity:** the 6-decimal ERC-20 balance is kept separate from the USDC used for native gas accounting.
+5. **EVM Paris compatibility:** contracts target the `paris` EVM version for compatibility with Arc Testnet.
+
+## System layers
+
+```text
+Web client
+  -> EIP-712 delegation and SessionKeyRegistry
+  -> Keeper: scheduler, monitor, simulation, relayer
+  -> SharedExecutorProxy and RecipeGuardrail
+  -> Arc Lending or Arc App Kit Swap
+  -> Arc Testnet
+```
+
+The frontend lets users connect a wallet, create a delegation, and preview recipe simulations. The keeper orchestrates cron jobs, watches events, simulates transactions, and submits them only after a successful check. PostgreSQL stores job state, while a queue guarantees jobs don't run concurrently.
+
+## On-chain layer
+
+- `SessionKeyRegistry.sol` tracks session keys, expiry, USDC spend limits, and revocation status.
+- `RecipeGuardrail.sol` validates the whitelisted protocol, function selector, and `minAmountOut`.
+- `SharedExecutorProxy.sol` is the central execution point; every state-changing call must pass a permission and guardrail check first.
+
+Every swap or liquidity withdrawal step must set a slippage limit. Execution functions require reentrancy protection and a circuit breaker so users or admins can perform an emergency stop under the system's policy.
+
+## Operational rules
+
+The keeper must simulate with `publicClient.simulateContract()` before broadcasting. If the simulation reverts or reports excessive slippage, the job is cancelled, its status recorded, and an alert raised — without spending any gas.
+
+The system uses retry backoff for RPC errors, separates the transaction-submitting worker from the confirmation-waiting worker, and records metrics such as cron duration, RPC call count, queue wait time, and failure rate.
+
+## Rollout roadmap
+
+1. Complete and test contracts with Foundry targeting the `paris` EVM.
+2. Operate the TypeScript keeper with BullMQ, Redis, PostgreSQL, and Viem-based simulation.
+3. Complete the Next.js frontend with a simulation, activation, and recipe-monitoring experience.
