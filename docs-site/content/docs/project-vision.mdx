@@ -1,0 +1,59 @@
+---
+title: Tầm nhìn dự án
+description: Tầm nhìn, mục tiêu và phạm vi MVP của DeFi Recipes on Arc.
+---
+
+# DeFi Recipes on Arc
+
+## Tầm nhìn dự án v2.1
+
+> Quy trình DeFi tự động, an toàn và đáng tin cậy trên Arc.
+
+**Mạng:** Arc Testnet (Chain ID `5042002`)
+
+## Tóm tắt
+
+DeFi Recipes on Arc cung cấp lớp tự động hóa phi lưu ký cho các quy trình tài chính trên Arc. Người dùng không phải giao private key cho keeper; thay vào đó, keeper chỉ nhận quyền hạn có giới hạn để thực thi các hành động đã được phê duyệt.
+
+MVP tập trung vào lõi thực thi, an ninh smart contract và hai recipe chính thức đã được kiểm soát. Marketplace, visual builder và các tính năng cộng đồng được để lại cho các giai đoạn sau.
+
+## Tầm nhìn
+
+Biến tự động hóa DeFi định kỳ trên Arc thành trải nghiệm đơn giản, an toàn và minh bạch như một giao dịch duy nhất.
+
+## Sứ mệnh
+
+Loại bỏ các thao tác DeFi thủ công lặp lại bằng những quy trình tự động đã được kiểm tra, phi lưu ký và tối ưu cho USDC trên Arc.
+
+## Nguyên tắc cốt lõi
+
+1. **Ưu tiên an ninh và thực thi:** bảo vệ tài sản người dùng quan trọng hơn các tính năng trình diễn.
+2. **Phi lưu ký và phân quyền theo phạm vi:** session key chỉ có hiệu lực trong thời gian, đích gọi và giới hạn chi tiêu được cho phép.
+3. **Minh bạch và mô phỏng:** mỗi recipe công khai bước thực thi, điều kiện kích hoạt và protocol được dùng; hệ thống mô phỏng trước khi kích hoạt.
+4. **Chỉ dùng protocol trong whitelist:** các đích gọi và swap route phải được phê duyệt trước.
+
+## Hai recipe MVP chính thức
+
+### USDC Yield Auto-Compounder
+
+Recipe nạp USDC vào Arc Lending, theo dõi phần thưởng, claim theo chu kỳ, đổi phần thưởng về USDC và tái nạp. Mức rủi ro dự kiến: thấp.
+
+### USDC sang EURC Recurring DCA
+
+Recipe đổi một lượng USDC cấu hình sẵn sang EURC theo lịch tuần hoặc tháng, giới hạn slippage và hoàn trả EURC về ví người dùng. Mức rủi ro dự kiến: thấp đến trung bình.
+
+## Mô hình an ninh
+
+```text
+Ví người dùng
+  -> Session key có phạm vi
+  -> Automation Keeper Engine
+  -> Shared Executor Contract
+  -> Protocol Arc đã được whitelist
+```
+
+Shared executor giảm bề mặt tấn công bằng cách dùng một điểm thực thi đã audit. Quyền của keeper bị giới hạn theo selector, địa chỉ protocol và ngưỡng đầu vào; slippage và price impact được kiểm soát tại từng bước. Người dùng luôn có thể thu hồi delegation hoặc dừng recipe.
+
+## Phạm vi MVP
+
+MVP bao gồm hai official recipe, shared executor, keeper theo cron và event, dashboard kích hoạt nhanh, cùng mô phỏng on-chain trước khi chạy. Visual recipe builder, marketplace permissionless, recipe forking và trust score thuộc các giai đoạn tương lai.

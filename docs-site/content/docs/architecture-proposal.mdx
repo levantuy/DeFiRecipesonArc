@@ -1,0 +1,49 @@
+---
+title: Đề xuất kiến trúc
+description: Kiến trúc hệ thống và các nguyên tắc kỹ thuật của DeFi Recipes on Arc.
+---
+
+# Đề xuất kiến trúc DeFi Recipes on Arc
+
+## Triết lý thiết kế
+
+DeFi Recipes on Arc là lớp tự động hóa yield và workflow tài chính phi lưu ký dành cho Arc. Kiến trúc ưu tiên năm nguyên tắc:
+
+1. **Shared Executor Proxy:** mọi workflow đi qua `SharedExecutorProxy` đã được audit.
+2. **Scoped session key delegation:** keeper chỉ có quyền tạm thời, bị giới hạn theo target, selector và thời hạn.
+3. **Mô phỏng trước khi thực thi:** keeper dùng `eth_call` để từ chối giao dịch lỗi hoặc vượt ngưỡng trước khi broadcast.
+4. **Tính toàn vẹn hai góc nhìn USDC:** số dư ERC-20 6 decimals được tách biệt với USDC dùng cho phép toán gas native.
+5. **Tương thích EVM Paris:** contract dùng mục tiêu `paris` để tương thích Arc Testnet.
+
+## Các lớp hệ thống
+
+```text
+Web client
+  -> EIP-712 delegation và SessionKeyRegistry
+  -> Keeper: scheduler, monitor, simulation, relayer
+  -> SharedExecutorProxy và RecipeGuardrail
+  -> Arc Lending hoặc Arc App Kit Swap
+  -> Arc Testnet
+```
+
+Frontend cho phép kết nối ví, tạo delegation và xem mô phỏng recipe. Keeper điều phối cron job, theo dõi sự kiện, mô phỏng giao dịch và gửi transaction sau khi kiểm tra thành công. PostgreSQL lưu trạng thái công việc, còn hàng đợi bảo đảm các job không chạy trùng.
+
+## Lớp on-chain
+
+- `SessionKeyRegistry.sol` theo dõi session key, thời hạn, giới hạn USDC và trạng thái thu hồi.
+- `RecipeGuardrail.sol` xác thực protocol whitelist, function selector và `minAmountOut`.
+- `SharedExecutorProxy.sol` là điểm thực thi tập trung; mọi lời gọi thay đổi trạng thái cần được kiểm tra quyền và guardrail trước.
+
+Mọi bước swap hoặc rút thanh khoản phải đặt giới hạn slippage. Các hàm thực thi cần có chống reentrancy và circuit breaker để người dùng hoặc quản trị viên dừng khẩn cấp theo chính sách hệ thống.
+
+## Quy tắc vận hành
+
+Keeper phải mô phỏng bằng `publicClient.simulateContract()` trước khi broadcast. Nếu mô phỏng revert hoặc dữ liệu chỉ ra slippage quá mức, job bị hủy, ghi nhận trạng thái và phát cảnh báo mà không tiêu tốn gas.
+
+Hệ thống dùng retry backoff cho lỗi RPC, tách worker gửi transaction với worker chờ confirmation và ghi các chỉ số như thời lượng cron, số lần gọi RPC, thời gian hàng đợi và tỷ lệ thất bại.
+
+## Lộ trình triển khai
+
+1. Hoàn thiện và kiểm thử contract bằng Foundry với EVM `paris`.
+2. Vận hành keeper TypeScript với BullMQ, Redis, PostgreSQL và mô phỏng Viem.
+3. Hoàn thiện frontend Next.js cùng trải nghiệm mô phỏng, kích hoạt và theo dõi recipe.
