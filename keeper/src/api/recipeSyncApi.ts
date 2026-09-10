@@ -1,9 +1,8 @@
 import { recipesRepository } from '../db/repositories/recipesRepository';
 import { executionLogsRepository } from '../db/repositories/executionLogsRepository';
 import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types';
-import type { Address } from 'viem';
+import { decodeFunctionData, formatUnits, type Address, type Hash } from 'viem';
 import { publicClient } from '../simulation/staticSimulationEngine';
-import { decodeFunctionData } from 'viem';
 import {
   ARC_APP_KIT_DCA_USDC_SPENDER,
   ARC_SWAP_ADAPTER_EXECUTE_SELECTOR,
@@ -438,6 +437,31 @@ function toRelativeTime(timestamp: Date): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
+async function resolveGasUsedUsdc(log: {
+  gasUsedUsdc: string | null;
+  txHash: string | null;
+}): Promise<string | null> {
+  if (!log.gasUsedUsdc) {
+    return null;
+  }
+
+  const reportedGas = Number(log.gasUsedUsdc);
+  if (Number.isFinite(reportedGas) && reportedGas < 1_000) {
+    return log.gasUsedUsdc;
+  }
+
+  if (!log.txHash || !/^0x[a-fA-F0-9]{64}$/.test(log.txHash)) {
+    return null;
+  }
+
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: log.txHash as Hash });
+    return formatUnits(receipt.gasUsed * receipt.effectiveGasPrice, 18);
+  } catch {
+    return null;
+  }
+}
+
 export async function listExecutionLogs(
   rawQuery: unknown
 ): Promise<Record<string, unknown>> {
@@ -448,23 +472,26 @@ export async function listExecutionLogs(
     limit: payload.limit,
   });
 
+  const formattedLogs = await Promise.all(logs.map(async (log) => {
+    const eventTimestamp = log.executedAt || log.simulatedAt;
+    const gasUsedUsdc = await resolveGasUsedUsdc(log);
+    return {
+      id: log.id,
+      recipeId: log.activeRecipeId,
+      recipeType: log.recipeType,
+      userAddress: log.recipeUserAddress,
+      txHash: log.txHash,
+      timestamp: toRelativeTime(eventTimestamp),
+      timestampIso: eventTimestamp.toISOString(),
+      status: log.status,
+      gasUsedUsdc: gasUsedUsdc ? `${gasUsedUsdc} USDC` : null,
+      errorMessage: log.errorMessage,
+    };
+  }));
+
   return {
     success: true,
-    logs: logs.map((log) => {
-      const eventTimestamp = log.executedAt || log.simulatedAt;
-      return {
-        id: log.id,
-        recipeId: log.activeRecipeId,
-        recipeType: log.recipeType,
-        userAddress: log.recipeUserAddress,
-        txHash: log.txHash,
-        timestamp: toRelativeTime(eventTimestamp),
-        timestampIso: eventTimestamp.toISOString(),
-        status: log.status,
-        gasUsedUsdc: log.gasUsedUsdc ? `${log.gasUsedUsdc} USDC` : null,
-        errorMessage: log.errorMessage,
-      };
-    }),
+    logs: formattedLogs,
   };
 }
 

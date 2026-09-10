@@ -125,6 +125,37 @@ describe('Cron Scheduler Recipe Triggering', () => {
     warnSpy.mockRestore();
   });
 
+  it('logs actionable hint once and skips enqueue when the user pauses recipe execution', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'user-execution-paused',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL' },
+      }),
+    ]);
+    simulateRecipeStepMock.mockResolvedValue({
+      success: false,
+      errorMessage: 'Execution reverted: UserExecutionPaused(address)',
+    });
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(queueAddMock).not.toHaveBeenCalled();
+    const actionRequiredWarnings = warnSpy.mock.calls
+      .flatMap((call) => call)
+      .filter(
+        (value) =>
+          typeof value === 'string' && value.includes('Recipe execution is paused by user=')
+      ) as string[];
+    expect(actionRequiredWarnings).toHaveLength(1);
+    expect(actionRequiredWarnings[0]).toContain('unpauseMyRecipes()');
+
+    warnSpy.mockRestore();
+  });
+
   it('enqueues DCA recipe with normalized 6-decimal USDC spend value', async () => {
     findByStatusMock.mockResolvedValue([
       makeActiveRecipe({

@@ -88,13 +88,26 @@ function splitUsdDisplay(value: number, fractionDigits: number, locale: string):
   return { whole, fraction };
 }
 
-function parseUsdcAmount(value: string | null | undefined): number {
+function parseGasUsedUsdc(value: string | null | undefined): number {
   if (!value) {
     return 0;
   }
 
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  const parsed = Number(value.replace(/\s*USDC\s*$/i, '').trim());
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return parsed;
+}
+
+function formatGasUsedUsdc(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = parseGasUsedUsdc(value);
+  return `${normalized.toFixed(6)} USDC`;
 }
 
 const PortfolioTrackerContent: React.FC = () => {
@@ -272,7 +285,7 @@ const PortfolioTrackerContent: React.FC = () => {
   }, [auditLogs]);
 
   const totalGasUsedUsdc = useMemo(() => {
-    return auditLogs.reduce((sum, log) => sum + parseUsdcAmount(log.gasUsedUsdc), 0);
+    return auditLogs.reduce((sum, log) => sum + parseGasUsedUsdc(log.gasUsedUsdc), 0);
   }, [auditLogs]);
 
   const totalUsdcBalance = useMemo(() => {
@@ -500,7 +513,7 @@ const PortfolioTrackerContent: React.FC = () => {
                       <span className="text-slate-500">{t('na')}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">{log.gasUsedUsdc || t('na')}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{formatGasUsedUsdc(log.gasUsedUsdc) || t('na')}</td>
                   <td className="px-4 py-3 text-xs">
                     <div className="text-slate-300 font-mono">{formatAbsoluteTimestamp(log.timestampIso, locale)}</div>
                     <div className="text-slate-500">{log.timestampRelative}</div>

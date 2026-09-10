@@ -57,6 +57,7 @@ const protocolNotAllowedHintsLogged = new Set<string>();
 const PROTOCOL_ALLOW_CACHE_TTL_MS = 5 * 60 * 1000;
 const appKitBypassHintsLogged = new Set<string>();
 const executorNotApprovedHintsLogged = new Set<string>();
+const userExecutionPausedHintsLogged = new Set<string>();
 const allowanceExceededHintsLogged = new Set<string>();
 const balanceExceededHintsLogged = new Set<string>();
 const allowancePrecheckHintsLogged = new Set<string>();
@@ -409,6 +410,11 @@ function isExecutorNotApprovedError(errorMessage: string): boolean {
   return normalized.includes('executor not approved');
 }
 
+function isUserExecutionPausedError(errorMessage: string): boolean {
+  const normalized = normalizeErrorMessage(errorMessage);
+  return normalized.includes('userexecutionpaused');
+}
+
 function isAllowanceExceededError(errorMessage: string): boolean {
   const normalized = normalizeErrorMessage(errorMessage);
   return normalized.includes('transfer amount exceeds allowance');
@@ -696,6 +702,19 @@ function maybeLogExecutorNotApprovedHint(targetProtocol: `0x${string}`) {
     `From target protocol owner wallet, call setExecutorApproval(${CONTRACT_ADDRESSES.sharedExecutorProxy}, true).`
   );
   executorNotApprovedHintsLogged.add(hintKey);
+}
+
+function maybeLogUserExecutionPausedHint(userAddress: `0x${string}`, context: string) {
+  const hintKey = userAddress.toLowerCase();
+  if (userExecutionPausedHintsLogged.has(hintKey)) {
+    return;
+  }
+
+  console.warn(
+    `[Cron Scheduler Action Required] Recipe execution is paused by user=${userAddress} ${context}. ` +
+    `From that user wallet, call unpauseMyRecipes() on SharedExecutorProxy ${CONTRACT_ADDRESSES.sharedExecutorProxy}.`
+  );
+  userExecutionPausedHintsLogged.add(hintKey);
 }
 
 async function withRpcRateLimitHandling<T>(
@@ -1360,6 +1379,10 @@ export async function pollAndTriggerActiveRecipes() {
             maybeLogExecutorNotApprovedHint(targetProtocol as `0x${string}`);
           }
 
+          if (isUserExecutionPausedError(simulationError)) {
+            maybeLogUserExecutionPausedHint(recipe.userAddress as `0x${string}`, context);
+          }
+
           if (recipe.recipeType === RecipeType.RECURRING_DCA && isAllowanceExceededError(simulationError)) {
             const dcaStateForAllowance = parseDcaConfigStateStrict(recipe.parametersJson);
             const configuredDcaAmount = dcaStateForAllowance.perExecutionAmountBaseUnits.toString();
@@ -1565,6 +1588,7 @@ export function __resetCronSchedulerStateForTests() {
   protocolAllowedCache.clear();
   protocolNotAllowedHintsLogged.clear();
   executorNotApprovedHintsLogged.clear();
+  userExecutionPausedHintsLogged.clear();
   allowanceExceededHintsLogged.clear();
   balanceExceededHintsLogged.clear();
   allowancePrecheckHintsLogged.clear();

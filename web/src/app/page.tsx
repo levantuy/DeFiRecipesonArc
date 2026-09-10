@@ -1055,14 +1055,15 @@ export default function Home() {
       pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
 
       setActiveRecipes((previous) => {
+        const existing = previous[recipeId];
+        if (!existing || existing.status === 'revoked') {
+          return previous;
+        }
         const nextStatus: RecipeLifecycleStatus = willPause ? 'paused' : 'active';
-        const updatedEntries = Object.entries(previous).map(([id, state]) => {
-          if (state.status === 'revoked') {
-            return [id, state] as const;
-          }
-          return [id, { ...state, status: nextStatus, txLifecycleStatus: 'submitted' as TxLifecycleStatus, txHash }] as const;
-        });
-        return Object.fromEntries(updatedEntries);
+        return {
+          ...previous,
+          [recipeId]: { ...existing, status: nextStatus, txLifecycleStatus: 'submitted' as TxLifecycleStatus, txHash },
+        };
       });
 
       let keeperSyncWarning = '';
@@ -1120,6 +1121,51 @@ export default function Home() {
         keeperSessionKeyAddress: configuredKeeperSessionKeyAddress,
         sessionKeyRegistryAddress,
       } = await ensureWalletReady();
+
+      if (!publicClient) {
+        throw new Error('Public client is not ready yet. Please wait a moment and retry.');
+      }
+
+      // On-chain state may already be revoked (e.g. keeper DB sync missed the previous
+      // revoke), which would otherwise revert with SessionKeyAlreadyRevoked/NotFound.
+      const existingPermission = await publicClient.readContract({
+        address: sessionKeyRegistryAddress,
+        abi: SESSION_KEY_REGISTRY_ABI,
+        functionName: 'getSessionPermission',
+        args: [connectedAddress, configuredKeeperSessionKeyAddress],
+      });
+
+      if (!existingPermission.exists || existingPermission.revoked) {
+        setActiveRecipes((previous) => {
+          const existing = previous[recipeId];
+          if (!existing) {
+            return previous;
+          }
+          return {
+            ...previous,
+            [recipeId]: {
+              ...existing,
+              status: 'revoked' as RecipeLifecycleStatus,
+              txLifecycleStatus: 'confirmed' as TxLifecycleStatus,
+            },
+          };
+        });
+
+        try {
+          await syncKeeperRecipe({
+            action: 'status',
+            userAddress: connectedAddress,
+            recipeType: currentRecipe.recipeType,
+            status: 'CANCELLED',
+          });
+        } catch {
+          // Keeper sync is best-effort here; on-chain state is already the safe end state.
+        }
+
+        setFeedbackMessage('Session key is already revoked on-chain. Local status has been synced.');
+        return;
+      }
+
       const submittedAtMs = Date.now();
       const txHash = await sendContractWithRetry(
         {
@@ -1140,16 +1186,19 @@ export default function Home() {
       pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
 
       setActiveRecipes((previous) => {
-        const updatedEntries = Object.entries(previous).map(([id, state]) => [
-          id,
-          {
-            ...state,
+        const existing = previous[recipeId];
+        if (!existing) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [recipeId]: {
+            ...existing,
             status: 'revoked' as RecipeLifecycleStatus,
             txLifecycleStatus: 'submitted' as TxLifecycleStatus,
             txHash,
           },
-        ] as const);
-        return Object.fromEntries(updatedEntries);
+        };
       });
 
       let keeperSyncWarning = '';
