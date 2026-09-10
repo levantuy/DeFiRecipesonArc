@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="5" y1="36" x2="35" y2="4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="0.52" stop-color="#06B6D4"/>
+      <stop offset="1" stop-color="#22C1A3"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="1" y="1" width="38" height="38" rx="10" fill="url(#bg)" filter="url(#shadow)"/>
+
+  <!-- Zap icon -->
+  <path
+    d="M23.6 7.2L10.8 21.7c-.7.8-.15 2.05.92 2.05h7.15l-2.48 8.05c-.3.96.93 1.57 1.57.78l12.8-14.48c.7-.8.15-2.05-.92-2.05h-7.15l2.48-8.05c.3-.96-.93-1.57-1.57-.78Z"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="2.15"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+</svg>

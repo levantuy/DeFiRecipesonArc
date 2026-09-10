@@ -1,0 +1,309 @@
+---
+title: Tổng quan các smart contract chính của dự án DeFi Recipes on Arc
+description: Vai trò của SessionKeyRegistry, RecipeGuardrail và SharedExecutorProxy trong hệ thống tự động hóa DeFi trên Arc Testnet.
+---
+
+Tài liệu này giải thích chi tiết vai trò của các contract cốt lõi được dùng trong hệ thống tự động hóa DeFi trên Arc Testnet. Ba contract quan trọng nhất là:
+
+- `SessionKeyRegistry`
+- `RecipeGuardrail`
+- `SharedExecutorProxy`
+
+Các địa chỉ đang cấu hình trong file environment của frontend là:
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+---
+
+## 1. Tổng quan kiến trúc
+
+Dự án không cho phép Keeper hoặc bot chạy với quyền điều khiển tài sản một cách tự do. Thay vào đó, hệ thống chia trách nhiệm thành 3 lớp rõ ràng:
+
+1. `SessionKeyRegistry` – nơi lưu trữ và xác thực quyền uỷ quyền (session key / delegation)
+2. `RecipeGuardrail` – nơi kiểm soát ràng buộc an ninh: whitelist protocol, whitelist function selector, giới hạn slippage
+3. `SharedExecutorProxy` – nơi trung tâm thực thi toàn bộ recipe, nhận lệnh từ keeper, kiểm tra quyền, rồi gọi vào protocol được phép
+
+Nói ngắn gọn:
+
+- người dùng giữ quyền sở hữu tài sản
+- keeper chỉ được phép thực thi theo đúng phạm vi đã cấp
+- mọi hành động phải đi qua một bộ kiểm soát an ninh cố định
+
+Đây là mô hình cốt lõi được mô tả trong [docs/project-vision.md](project-vision.md) và [docs/architecture-proposal.md](architecture-proposal.md).
+
+---
+
+## 2. Contract 1: SessionKeyRegistry
+
+### 2.1. Mục đích
+
+`SessionKeyRegistry` là nơi lưu trữ thông tin về các session key được người dùng cấp cho Keeper hoặc automation engine. Nó giống như một “sổ đăng ký quyền hạn” cho phép hệ thống biết:
+
+- session key nào đang còn hiệu lực
+- user nào đã cấp quyền cho session key đó
+- session key hết hạn vào lúc nào
+- mỗi lần thực thi tối đa có thể tiêu tốn bao nhiêu USDC
+- session key đó có bị thu hồi hoặc vô hiệu hóa không
+
+### 2.2. Vai trò trong hệ thống
+
+Contract này giúp hệ thống duy trì nguyên tắc “không cho bot quyền chuyển tiền tùy tiện”. Thay vì trao private key cho keeper, người dùng chỉ cấp một session key có thời hạn ngắn và giới hạn cụ thể.
+
+Các thông tin quan trọng mà contract này quản lý thường bao gồm:
+
+- `userAddress`
+- `sessionPublicKey`
+- `validUntil`
+- `allowedTarget`
+- `allowedSelectors`
+- `usdcSpendLimitPerTx`
+
+### 2.3. Vì sao contract này quan trọng?
+
+Vì nếu không có `SessionKeyRegistry`, hệ thống sẽ mất đi lớp kiểm soát đầu vào. Keeper sẽ hoạt động như một “đại lý không kiểm soát”, có thể thực thi những hành động vượt quá phạm vi. Khi đã có `SessionKeyRegistry`, mọi request thực thi trước tiên phải được đối chiếu với trạng thái session key.
+
+### 2.4. Ý nghĩa của địa chỉ
+
+Địa chỉ hiện tại:
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+```
+
+Đây là địa chỉ trên Arc Testnet mà frontend và keeper sử dụng để:
+
+- đọc trạng thái quyền uỷ quyền
+- xác minh session key còn active hay không
+- kiểm tra giới hạn chi tiêu
+- xác minh user đã cấp quyền cho keeper chưa
+
+### 2.5. Ví dụ luồng sử dụng
+
+1. Người dùng ký một session key để quản lý recipe
+2. Keeper đóng vai trò đại diện cho user
+3. Khi cần thực thi, Keeper gọi `SharedExecutorProxy`
+4. `SharedExecutorProxy` đọc thông tin từ `SessionKeyRegistry`
+5. Nếu session key còn hiệu lực, hợp đồng tiếp tục xử lý
+6. Nếu hết hạn hoặc bị thu hồi, giao dịch bị từ chối
+
+---
+
+## 3. Contract 2: RecipeGuardrail
+
+### 3.1. Mục đích
+
+`RecipeGuardrail` là lớp bảo vệ an ninh cho mọi giao dịch thực thi. Nó hoạt động như “cửa kiểm soát” của hệ thống.
+
+Contract này kiểm tra các điều kiện sau:
+
+- protocol đích có nằm trong danh sách trắng hay không
+- selector của function được phép gọi có nằm trong whitelist hay không
+- minAmountOut / slippage có đảm bảo mức an toàn không
+- liệu giao dịch có vượt ngưỡng rủi ro hay không
+
+### 3.2. Vai trò trong hệ thống
+
+Nếu `SharedExecutorProxy` là nơi nhận lệnh thực thi, thì `RecipeGuardrail` là nơi xác định xem lệnh đó có được phép đi tiếp hay không. Nó là lớp ngăn chặn các lệnh nguy hiểm.
+
+Ví dụ ngắn gọn:
+
+- Một keeper muốn gọi `deposit()` lên Arc Lending
+- `SharedExecutorProxy` sẽ hỏi `RecipeGuardrail`: “địa chỉ này có được phép không?”
+- Nếu đó là protocol đã whitelist và function selector hợp lệ, thì tiếp tục
+- Nếu không, revert ngay
+
+### 3.3. Các ràng buộc bảo vệ chính
+
+Contract này thường thực hiện các kiểm tra sau:
+
+- `isWhitelistedProtocol(address protocol)`
+- `isSelectorAllowed(address protocol, bytes4 selector)`
+- kiểm tra `minAmountOut`
+- kiểm tra slippage và price impact
+- ngăn chặn gọi trực tiếp đến các hàm không được phép
+
+Đây là giải pháp để tránh kiểu gọi mù quáng tới contract bất kỳ, và là lý do vì sao dự án tập trung vào “whitelist only” thay vì “mọi hợp đồng đều mở”.
+
+### 3.4. Ý nghĩa của địa chỉ
+
+Địa chỉ hiện tại:
+
+```dotenv
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+```
+
+Địa chỉ này dùng để:
+
+- kiểm tra protocol nào được quyền tham gia recipe
+- màu sắc whitelist các function selectors
+- xác định các target call hợp lệ
+- chặn các bước không an toàn trong workflow
+
+### 3.5. Tại sao đây là contract cực quan trọng?
+
+Vì nó là lớp phòng vệ cuối cùng trước khi hệ thống chạm vào DeFi protocol thực tế. Nếu không có `RecipeGuardrail`, một keeper có thể cố gắng gọi các function hoặc contract không thuộc phạm vi bị cho phép.
+
+---
+
+## 4. Contract 3: SharedExecutorProxy
+
+### 4.1. Mục đích
+
+`SharedExecutorProxy` là “hợp đồng trung tâm” của hệ thống. Nó đóng vai trò như một nhà điều phối. Mọi recipe đều đi qua đây thay vì mỗi recipe có một contract riêng.
+
+Nó có trách nhiệm:
+
+- nhận yêu cầu thực thi từ keeper hoặc automation service
+- xác thực session key / quyền hạn
+- kiểm tra xem user có quyền thực thi hay không
+- gọi `RecipeGuardrail` để xác thực thêm
+- thực thi các bước hợp lệ tiếp theo lên protocol được whitelist
+- đảm bảo quyền chuyển tiền nằm trong phạm vi cho phép
+
+### 4.2. Tại sao gọi là Proxy?
+
+Vì đây là một hợp đồng “trung tâm, chia sẻ, tái sử dụng”, không phải contract riêng cho từng recipe. Điều này giúp:
+
+- giảm diện tích tấn công của smart contract
+- dễ quản lý và audit
+- dễ thêm recipe mới mà không cần deploy mới nhiều contract
+- không tạo nhiều điểm rủi ro riêng lẻ
+
+### 4.3. Vai trò trong luồng thực thi
+
+Thông thường luồng hoạt động như sau:
+
+1. Người dùng cấp session key và uỷ quyền cho keeper
+2. Keeper phát hiện thời điểm cần thực thi recipe
+3. Keeper gửi request đến `SharedExecutorProxy`
+4. `SharedExecutorProxy` kiểm tra session key trong `SessionKeyRegistry`
+5. `SharedExecutorProxy` gọi `RecipeGuardrail` để xác nhận target và function hợp lệ
+6. Nếu hợp lệ, contract sẽ thực hiện bước trên protocol như lending hoặc swap
+7. Nếu không hợp lệ, giao dịch bị revert
+
+### 4.4. Ý nghĩa của địa chỉ
+
+Địa chỉ hiện tại:
+
+```dotenv
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+Đây là địa chỉ mà frontend, keeper và runtime config dùng để:
+
+- gửi yêu cầu thực thi recipe
+- kiểm tra quyền uỷ quyền của session key
+- liên kết với SessionKeyRegistry và RecipeGuardrail
+- điều phối các bước trên protocol
+
+### 4.5. Tại sao đây là trái tim của hệ thống?
+
+Bởi vì tất cả logic thực thi quan trọng đều tập trung ở đây. Nếu contract này là “trạm điều khiển”, thì `RecipeGuardrail` là “bộ phận kiểm soát an ninh”, và `SessionKeyRegistry` là “sổ đăng ký quyền hạn”. Ba phần này hoạt động như một hệ thống thống nhất.
+
+---
+
+## 5. Mối quan hệ giữa 3 contract
+
+Ba contract này hoạt động theo chuỗi truy vết và kiểm soát như sau:
+
+```text
+Người dùng
+   |
+   | cấp session key / delegation
+   v
+SessionKeyRegistry
+   |
+   | xác minh session còn hiệu lực và giới hạn spend
+   v
+SharedExecutorProxy
+   |
+   | kiểm tra request có hợp lệ hay không
+   v
+RecipeGuardrail
+   |
+   | whitelist protocol + function + slippage
+   v
+Protocol được phép (Arc Lending / App Kit Swap)
+```
+
+Nói ngắn gọn:
+
+- `SessionKeyRegistry` trả lời: “quyền này có hợp lệ không?”
+- `RecipeGuardrail` trả lời: “điều này có an toàn để thực hiện không?”
+- `SharedExecutorProxy` trả lời: “nếu hợp lệ, hãy thực thi như thế nào?”
+
+---
+
+## 6. Tại sao dự án cần 3 contract thay vì một contract duy nhất?
+
+Phân tách trách nhiệm giúp hệ thống rõ ràng và an toàn hơn:
+
+- `SessionKeyRegistry`: quản lý quyền hạn
+- `RecipeGuardrail`: quản lý rào cản an ninh
+- `SharedExecutorProxy`: thực thi hành động
+
+Nếu gom hết vào một contract duy nhất, code sẽ rất khó kiểm soát, khó audit, và dễ xảy ra lỗi khi thêm recipe mới. Phân tách làm tăng khả năng bảo trì, dễ đọc, dễ test và dễ nâng cấp.
+
+---
+
+## 7. Ví dụ thực tế: Recipe USDC Yield Auto-Compounder
+
+Khi recipe Auto-Compounder chạy, logic sẽ đi qua các contract theo chiều này:
+
+1. Keeper kiểm tra phần thưởng tích lũy
+2. Keeper tạo request thực thi
+3. `SharedExecutorProxy` xác nhận session key còn hiệu lực
+4. `RecipeGuardrail` xác nhận protocol, selector và slippage hợp lệ
+5. `SharedExecutorProxy` gọi Arc Lending để claim reward
+6. `SharedExecutorProxy` gọi App Kit Swap để swap token reward thành USDC
+7. `SharedExecutorProxy` nạp USDC lại vào lending
+8. Record/emit event để dashboard hiển thị trạng thái
+
+Trong ví dụ này, user không phải rút tiền ra tay hoặc giao dịch thủ công. Mọi bước đều theo cơ chế uỷ quyền và kiểm soát an ninh.
+
+---
+
+## 8. Lưu ý quan trọng khi dùng các địa chỉ này
+
+Các địa chỉ contract này là phần cực kỳ quan trọng trong quá trình runtime của frontend và keeper. Nếu sai địa chỉ hoặc không khớp với deployment trên chain, hệ thống sẽ:
+
+- không xác thực được session key
+- không đọc đúng state của contract
+- không thể thực hiện recipe
+- có thể gây mismatch giữa frontend và on-chain state
+
+Do đó, khi triển khai hay chỉnh sửa, cần luôn đảm bảo:
+
+- `NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS` đúng với contract đã deploy trên Arc Testnet
+- `NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS` đúng với contract guardrail thật
+- `NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS` đúng với proxy thực thi thật
+
+---
+
+## 9. Kết luận
+
+Ba contract chính của dự án tạo thành một hệ thống kiểm soát ba lớp:
+
+- `SessionKeyRegistry`: quyền hạn
+- `RecipeGuardrail`: an ninh và whitelist
+- `SharedExecutorProxy`: thực thi tập trung
+
+Với kiến trúc này, dự án đạt được mục tiêu cốt lõi của mình: cho phép tự động hóa DeFi trên Arc mà vẫn giữ được nguyên tắc phi lưu ký, kiểm soát phạm vi, và giảm rủi ro tài chính cho người dùng.
+
+Nếu xem theo logic đầu tư và bảo mật, đây là mô hình rất hợp lý vì nó tách biệt quyền hạn, kiểm soát giao thức và thực thi hành động thành các lớp riêng biệt, thay vì để một đoạn code thực hiện mọi thứ cùng lúc.
+
+---
+
+## 10. Danh sách địa chỉ đang dùng
+
+```dotenv
+NEXT_PUBLIC_SESSION_KEY_REGISTRY_ADDRESS=0x5809c69b665d256a2dd5501f3948746f533a85f8
+NEXT_PUBLIC_RECIPE_GUARDRAIL_ADDRESS=0xe2c2758354163ef16dad1d177b1424e67c993755
+NEXT_PUBLIC_SHARED_EXECUTOR_PROXY_ADDRESS=0x0f41e2b1f31d905d5e0aa6e1359ae43c6b78c867
+```
+
+Ba địa chỉ này đại diện cho 3 “trụ cột” của hệ thống DeFi Recipes trên Arc: quyền uỷ quyền, rào cản an ninh, và thực thi tập trung.
