@@ -55,6 +55,7 @@ const DCA_DEFAULT_TOTAL_BUDGET_USDC = '50';
 const DCA_DEFAULT_PER_EXECUTION_USDC = '5';
 const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9';
 const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b';
+export const DEFAULT_SESSION_SPEND_LIMIT_USDC = '500';
 
 interface SimulationModalProps {
   isOpen: boolean;
@@ -62,6 +63,7 @@ interface SimulationModalProps {
   onClose: () => void;
   onConfirm: (payload: {
     maxSlippageBps: number;
+    sessionSpendLimitUsdc: string;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -95,6 +97,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   const { lang, t } = useLanguage();
   const dictionary = lang === 'vi' ? vi : en;
   const [maxSlippageBps, setMaxSlippageBps] = useState(recipe?.maxSlippageBps ?? 50);
+  const [sessionSpendLimitUsdc, setSessionSpendLimitUsdc] = useState(DEFAULT_SESSION_SPEND_LIMIT_USDC);
   const [totalDcaBudgetUsdc, setTotalDcaBudgetUsdc] = useState(recipe?.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
   const [perExecutionUsdc, setPerExecutionUsdc] = useState(recipe?.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
   const executionMode: DcaExecutionMode = 'PULL';
@@ -105,6 +108,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   useEffect(() => {
     if (recipe) {
       setMaxSlippageBps(recipe.maxSlippageBps);
+      setSessionSpendLimitUsdc(DEFAULT_SESSION_SPEND_LIMIT_USDC);
       setTotalDcaBudgetUsdc(recipe.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
       setPerExecutionUsdc(recipe.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
       setAllowanceCheck(null);
@@ -114,6 +118,12 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   }, [recipe]);
 
   const isDcaRecipe = recipe?.recipeType === 'RECURRING_DCA';
+  let sessionSpendLimitValidationError: string | null = null;
+  try {
+    parseUsdcAmountToBaseUnits(sessionSpendLimitUsdc, 'Session spending limit');
+  } catch (error: unknown) {
+    sessionSpendLimitValidationError = error instanceof Error ? error.message : t('invalidDcaConfig');
+  }
   let dcaValidationError: string | null = null;
   let estimatedRuns: bigint = 0n;
 
@@ -275,6 +285,25 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       className="w-full"
                     />
                   </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                      <span>{t('sessionSpendLimitLabel')}</span>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={sessionSpendLimitUsdc}
+                      onChange={(event) => setSessionSpendLimitUsdc(event.target.value)}
+                      placeholder={t('sessionSpendLimitPlaceholder')}
+                      className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                    />
+                    <div className="mt-1 text-[11px] text-slate-500">{t('sessionSpendLimitHint')}</div>
+                    {sessionSpendLimitValidationError ? (
+                      <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">
+                        {sessionSpendLimitValidationError}
+                      </div>
+                    ) : null}
+                  </div>
                   {isDcaRecipe ? (
                     <div>
                       <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
@@ -422,12 +451,13 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isConfirming || Boolean(isDcaRecipe && dcaValidationError)}
+                disabled={isConfirming || Boolean(sessionSpendLimitValidationError) || Boolean(isDcaRecipe && dcaValidationError)}
                 onClick={async (event) => {
                   event.stopPropagation();
                   const clampedSlippage = Math.min(100, Math.max(10, maxSlippageBps));
                   const payload: {
                     maxSlippageBps: number;
+                    sessionSpendLimitUsdc: string;
                     dcaConfig?: {
                       totalDcaBudgetUsdc: string;
                       perExecutionUsdc: string;
@@ -437,7 +467,11 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     };
                   } = {
                     maxSlippageBps: clampedSlippage,
+                    sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
                   };
+
+                  // Ensure session spend limit parses correctly before submitting activation.
+                  parseUsdcAmountToBaseUnits(sessionSpendLimitUsdc, 'Session spending limit');
 
                   if (isDcaRecipe) {
                     const parsed = parseDcaActivationConfig({

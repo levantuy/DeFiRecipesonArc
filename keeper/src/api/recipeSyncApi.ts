@@ -13,7 +13,9 @@ import {
   parseDcaTargetAssetSymbolStrict,
   parseDcaTargetAssetSymbolWithFallback,
 } from '../config/dcaRouting';
-import { CONTRACT_ADDRESSES } from '../config/contracts';
+import { CONTRACT_ADDRESSES, SESSION_KEY_REGISTRY_ABI } from '../config/contracts';
+import { getKeeperPrivateKey } from '../config/runtime';
+import { privateKeyToAccount } from 'viem/accounts';
 import {
   parseDcaConfigStateStrict,
   toPersistedDcaParameters,
@@ -129,6 +131,49 @@ function parseSwapProvider(value: unknown): SwapProvider {
   return value as SwapProvider;
 }
 
+// Cumulative session spend quota bounds (USDC display units), shared by every recipe under the
+// same userAddress + keeperSessionKeyAddress pair. Not a per-transaction cap.
+const MIN_SESSION_SPEND_LIMIT_USDC = '1';
+const MAX_SESSION_SPEND_LIMIT_USDC = '1000000';
+const DEFAULT_SESSION_SPEND_LIMIT_USDC = '500';
+
+function usdcDecimalStringToBaseUnits(normalized: string): bigint {
+  const [wholePartRaw, fractionalPartRaw = ''] = normalized.split('.');
+  const wholePart = BigInt(wholePartRaw);
+  const fractionalPart = BigInt((fractionalPartRaw + '000000').slice(0, 6));
+  return wholePart * 1_000_000n + fractionalPart;
+}
+
+function parseSessionSpendLimitUsdc(value: unknown): { display: string; baseUnits: bigint } {
+  if (typeof value !== 'string') {
+    throw new Error('sessionSpendLimitUsdc must be a string.');
+  }
+
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new Error('sessionSpendLimitUsdc is required.');
+  }
+
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error('sessionSpendLimitUsdc must be numeric with up to 6 decimals.');
+  }
+
+  const baseUnits = usdcDecimalStringToBaseUnits(normalized);
+  if (baseUnits <= 0n) {
+    throw new Error('sessionSpendLimitUsdc must be greater than 0.');
+  }
+
+  const minBaseUnits = usdcDecimalStringToBaseUnits(MIN_SESSION_SPEND_LIMIT_USDC);
+  const maxBaseUnits = usdcDecimalStringToBaseUnits(MAX_SESSION_SPEND_LIMIT_USDC);
+  if (baseUnits < minBaseUnits || baseUnits > maxBaseUnits) {
+    throw new Error(
+      `sessionSpendLimitUsdc must be between ${MIN_SESSION_SPEND_LIMIT_USDC} and ${MAX_SESSION_SPEND_LIMIT_USDC} USDC.`
+    );
+  }
+
+  return { display: normalized, baseUnits };
+}
+
 function parseRegisterPayload(rawBody: unknown): {
   userAddress: string;
   recipeType: RecipeType;
@@ -157,6 +202,21 @@ function parseRegisterPayload(rawBody: unknown): {
     }
     parametersJson = body.parametersJson;
   }
+
+  // Cumulative session spend quota shared by every recipe under this userAddress + keeper session
+  // key pair. Canonical field is sessionSpendLimitUsdc; maxUsdcSpendLimit is kept as a legacy alias.
+  const requestedSessionSpendLimit =
+    (parametersJson as Record<string, unknown>).sessionSpendLimitUsdc ??
+    (parametersJson as Record<string, unknown>).maxUsdcSpendLimit ??
+    DEFAULT_SESSION_SPEND_LIMIT_USDC;
+  const { display: sessionSpendLimitUsdc, baseUnits: sessionSpendLimitBaseUnits } =
+    parseSessionSpendLimitUsdc(requestedSessionSpendLimit);
+  parametersJson = {
+    ...parametersJson,
+    sessionSpendLimitUsdc,
+    sessionSpendLimitBaseUnits: sessionSpendLimitBaseUnits.toString(),
+    maxUsdcSpendLimit: sessionSpendLimitUsdc,
+  };
 
   if (recipeType === RecipeType.RECURRING_DCA) {
     if (targetProtocol) {
@@ -548,6 +608,58 @@ export async function listActiveRecipes(rawQuery: unknown): Promise<Record<strin
       updatedAt: recipe.updatedAt.toISOString(),
       lastExecutedAt: recipe.lastExecutedAt ? recipe.lastExecutedAt.toISOString() : null,
     })),
+  };
+}
+
+interface SessionSpendQuotaPayload {
+  userAddress?: unknown;
+  sessionKeyAddress?: unknown;
+}
+
+// On-chain SessionKeyRegistry permission is the source of truth for maxUsdcSpendLimit and
+// currentUsdcSpent; this is a read-only projection for UI display, never used for accounting.
+export async function getSessionSpendQuota(rawQuery: unknown): Promise<Record<string, unknown>> {
+  if (!isRecord(rawQuery)) {
+    throw new Error('Request query must be an object.');
+  }
+
+  const query = rawQuery as SessionSpendQuotaPayload;
+  const userAddress = normalizeAddress(query.userAddress, 'userAddress');
+  const sessionKeyAddress =
+    query.sessionKeyAddress !== undefined
+      ? normalizeAddress(query.sessionKeyAddress, 'sessionKeyAddress')
+      : privateKeyToAccount(getKeeperPrivateKey()).address.toLowerCase();
+
+  const permission = (await publicClient.readContract({
+    address: CONTRACT_ADDRESSES.sessionKeyRegistry,
+    abi: SESSION_KEY_REGISTRY_ABI,
+    functionName: 'getSessionPermission',
+    args: [userAddress as Address, sessionKeyAddress as Address],
+  })) as {
+    validUntil: bigint;
+    maxUsdcSpendLimit: bigint;
+    currentUsdcSpent: bigint;
+    revoked: boolean;
+    exists: boolean;
+  };
+
+  const maxUsdcSpendLimit = BigInt(permission.maxUsdcSpendLimit);
+  const currentUsdcSpent = BigInt(permission.currentUsdcSpent);
+  const remainingUsdcSpendLimit =
+    maxUsdcSpendLimit === 0n ? 0n : maxUsdcSpendLimit > currentUsdcSpent ? maxUsdcSpendLimit - currentUsdcSpent : 0n;
+
+  return {
+    success: true,
+    quota: {
+      exists: permission.exists,
+      revoked: permission.revoked,
+      maxUsdcSpendLimit: formatUnits(maxUsdcSpendLimit, 6),
+      currentUsdcSpent: formatUnits(currentUsdcSpent, 6),
+      remainingUsdcSpendLimit: formatUnits(remainingUsdcSpendLimit, 6),
+      validUntil: permission.exists
+        ? new Date(Number(permission.validUntil) * 1000).toISOString()
+        : null,
+    },
   };
 }
 

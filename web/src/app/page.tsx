@@ -18,12 +18,14 @@ import {
 } from '@/lib/dcaConfig';
 import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
+import { parseUsdcAmountToBaseUnits } from '@/lib/dcaConfig';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { FooterLinkIcon } from './layout-icons';
 import { APP_VERSION, footerLinks } from './layout-config';
 
-const DEFAULT_MAX_USDC_SPEND_PER_TX = '500';
+// Cumulative USDC spend quota shared across every recipe for the same userAddress + keeper session key pair.
+
 const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
 const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b' as const;
 const DCA_USDC_ALLOWANCE_SPENDERS = [DCA_USDC_SPENDER, DCA_USDC_PROXY_SPENDER] as const;
@@ -48,26 +50,27 @@ interface ActiveRecipeState {
   status: RecipeLifecycleStatus;
   txLifecycleStatus: TxLifecycleStatus;
   maxSlippageBps: number;
-  maxUsdcSpendPerTx: string;
+  sessionSpendLimitUsdc: string;
   validUntil: string;
   txHash: `0x${string}` | null;
+}
+
+interface SessionSpendQuotaSnapshot {
+  maxUsdcSpendLimit: string;
+  currentUsdcSpent: string;
+  remainingUsdcSpendLimit: string;
+  validUntil: string | null;
 }
 
 interface DelegationSetupResult {
   txHash: `0x${string}` | null;
   alreadyValid: boolean;
-  submittedAtMs: number | null;
 }
 
 interface WalletReadyContext {
   connectedAddress: `0x${string}`;
   keeperSessionKeyAddress: `0x${string}`;
   sessionKeyRegistryAddress: `0x${string}`;
-}
-
-interface FrontendPerformanceMetrics {
-  timeToSubmittedMs: number[];
-  timeToConfirmedMs: number[];
 }
 
 interface DcaAllowancePrecheckApiResponse {
@@ -87,13 +90,25 @@ interface KeeperRuntimeConfigApiResponse {
   error?: string;
 }
 
+interface SessionSpendQuotaApiResponse {
+  success?: boolean;
+  quota?: {
+    maxUsdcSpendLimit?: string;
+    currentUsdcSpent?: string;
+    remainingUsdcSpendLimit?: string;
+    validUntil?: string | null;
+  } | null;
+  error?: string;
+}
+
 interface PersistedActiveRecipeApiItem {
   id?: string;
   userAddress?: string;
   recipeType?: string;
   status?: string;
   maxSlippageBps?: number;
-  maxUsdcSpendLimit?: string;
+  sessionSpendLimitUsdc?: string | null;
+  maxUsdcSpendLimit?: string | null;
   delegationTxHash?: string | null;
   delegationValidUntil?: string | null;
   createdAt?: string;
@@ -257,19 +272,45 @@ async function precheckDcaAllowance(payload: {
   return data.allowance;
 }
 
+async function fetchSessionSpendQuota(payload: {
+  userAddress: `0x${string}`;
+  keeperSessionKeyAddress: `0x${string}`;
+}): Promise<SessionSpendQuotaSnapshot | null> {
+  const response = await fetch('/api/recipes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'sessionSpendQuota',
+      userAddress: payload.userAddress,
+      keeperSessionKeyAddress: payload.keeperSessionKeyAddress,
+    }),
+  });
+
+  const data = (await response.json().catch(() => null)) as SessionSpendQuotaApiResponse | null;
+  if (!response.ok || !data?.success || !data.quota) {
+    return null;
+  }
+
+  return {
+    maxUsdcSpendLimit: data.quota.maxUsdcSpendLimit || 'unknown',
+    currentUsdcSpent: data.quota.currentUsdcSpent || 'unknown',
+    remainingUsdcSpendLimit: data.quota.remainingUsdcSpendLimit || 'unknown',
+    validUntil: data.quota.validUntil || null,
+  };
+}
+
 export default function Home() {
   const { lang, t } = useLanguage();
   const locale = lang === 'vi' ? 'vi-VN' : 'en-US';
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeConfig | null>(null);
   const [activeRecipes, setActiveRecipes] = useState<Record<string, ActiveRecipeState>>({});
+  const [sessionSpendQuota, setSessionSpendQuota] = useState<SessionSpendQuotaSnapshot | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
   const [isActivating, setIsActivating] = useState(false);
   const [isUpdatingDelegation, setIsUpdatingDelegation] = useState(false);
   const [lastActionAt, setLastActionAt] = useState<number>(0);
-  const [frontendMetrics, setFrontendMetrics] = useState<FrontendPerformanceMetrics>({
-    timeToSubmittedMs: [],
-    timeToConfirmedMs: [],
-  });
   const { isConnected, address } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
@@ -455,7 +496,7 @@ export default function Home() {
             status: lifecycleStatus,
             txLifecycleStatus: 'confirmed',
             maxSlippageBps: typeof recipe.maxSlippageBps === 'number' ? recipe.maxSlippageBps : recipeConfig.maxSlippageBps,
-            maxUsdcSpendPerTx: `${recipe.maxUsdcSpendLimit || DEFAULT_MAX_USDC_SPEND_PER_TX} USDC`,
+            sessionSpendLimitUsdc: recipe.sessionSpendLimitUsdc || recipe.maxUsdcSpendLimit || 'unknown',
             validUntil: recipe.delegationValidUntil || recipe.createdAt || new Date().toISOString(),
             txHash: recipe.delegationTxHash && /^0x[a-fA-F0-9]{64}$/.test(recipe.delegationTxHash)
               ? recipe.delegationTxHash as `0x${string}`
@@ -481,24 +522,32 @@ export default function Home() {
     };
   }, [isConnected, address]);
 
-  const pushFrontendMetric = (field: keyof FrontendPerformanceMetrics, valueMs: number) => {
-    setFrontendMetrics((previous) => {
-      const nextSeries = [...previous[field], valueMs].slice(-50);
-      return {
-        ...previous,
-        [field]: nextSeries,
-      };
-    });
-  };
-
-  const toP95 = (values: number[]): number | null => {
-    if (values.length === 0) {
-      return null;
+  useEffect(() => {
+    const resolvedKeeperSessionKeyAddress = runtimeKeeperSessionKeyAddress || keeperSessionKeyAddress;
+    if (!isConnected || !address || !isAddress(address) || !resolvedKeeperSessionKeyAddress || Object.keys(activeRecipes).length === 0) {
+      setSessionSpendQuota(null);
+      return;
     }
-    const sorted = [...values].sort((a, b) => a - b);
-    const index = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
-    return sorted[index];
-  };
+
+    let cancelled = false;
+
+    void fetchSessionSpendQuota({
+      userAddress: address,
+      keeperSessionKeyAddress: resolvedKeeperSessionKeyAddress,
+    }).then((quota) => {
+      if (!cancelled) {
+        setSessionSpendQuota(quota);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setSessionSpendQuota(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address, runtimeKeeperSessionKeyAddress, keeperSessionKeyAddress, activeRecipes]);
 
   const ensureWalletReady = async (): Promise<WalletReadyContext> => {
     if (!isConnected || !address) {
@@ -532,7 +581,8 @@ export default function Home() {
   const ensureSessionKeyDelegation = async (
     connectedAddress: `0x${string}`,
     configuredKeeperSessionKeyAddress: `0x${string}`,
-    sessionKeyRegistryAddress: `0x${string}`
+    sessionKeyRegistryAddress: `0x${string}`,
+    requestedSpendLimitBaseUnits: bigint
   ): Promise<DelegationSetupResult> => {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
@@ -552,26 +602,33 @@ export default function Home() {
     const hasSpendHeadroom =
       permission.maxUsdcSpendLimit === 0n ||
       permission.maxUsdcSpendLimit - permission.currentUsdcSpent >= MIN_SESSION_SPEND_HEADROOM;
+    // The session spend quota is shared cumulatively across every recipe under this
+    // userAddress + keeper session key pair, so it must exactly match what the user selected.
+    const quotaMatchesRequest = permission.maxUsdcSpendLimit === requestedSpendLimitBaseUnits;
 
-    if (isActive && hasSpendHeadroom) {
+    if (isActive && hasSpendHeadroom && quotaMatchesRequest) {
       return {
         txHash: null,
         alreadyValid: true,
-        submittedAtMs: null,
       };
+    }
+
+    if (isActive && quotaMatchesRequest === false) {
+      setFeedbackMessage(
+        'Selected session spending limit differs from the currently registered delegation. ' +
+        'Renewing delegation now: this resets cumulative spend (currentUsdcSpent) back to 0 for this wallet + keeper session key.'
+      );
     }
 
     const validUntilMs = Date.now() + DEFAULT_SESSION_VALIDITY_MS;
     const validUntilSeconds = BigInt(Math.floor(validUntilMs / 1000));
-    const maxUsdcSpendLimit = parseUnits(DEFAULT_MAX_USDC_SPEND_PER_TX, 6);
 
-    const submittedAtMs = Date.now();
     const txHash = await sendContractWithRetry(
       {
         address: sessionKeyRegistryAddress,
         abi: SESSION_KEY_REGISTRY_ABI,
         functionName: 'registerSessionKey',
-        args: [configuredKeeperSessionKeyAddress, validUntilSeconds, maxUsdcSpendLimit],
+        args: [configuredKeeperSessionKeyAddress, validUntilSeconds, requestedSpendLimitBaseUnits],
         chainId: ARC_TESTNET_CHAIN_ID,
       },
       {
@@ -581,12 +638,9 @@ export default function Home() {
       }
     );
 
-    pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
-
     return {
       txHash,
       alreadyValid: false,
-      submittedAtMs,
     };
   };
 
@@ -637,9 +691,8 @@ export default function Home() {
     return false;
   };
 
-  const trackConfirmationInBackground = (
+  const confirmTransactionInBackground = (
     hash: `0x${string}`,
-    startedAtMs: number,
     onConfirmed: () => void,
     onFailed: (reason: string) => void,
     onTimeout: () => void
@@ -652,7 +705,6 @@ export default function Home() {
       });
 
       if (confirmedInPrimaryWindow) {
-        pushFrontendMetric('timeToConfirmedMs', Date.now() - startedAtMs);
         onConfirmed();
         return;
       }
@@ -663,7 +715,6 @@ export default function Home() {
         await sleep(TX_CONFIRM_BACKGROUND_DELAY_MS);
         const confirmed = await waitForReceiptWithTimeout(hash, TX_CONFIRM_TIMEOUT_MS);
         if (confirmed) {
-          pushFrontendMetric('timeToConfirmedMs', Date.now() - startedAtMs);
           onConfirmed();
           return;
         }
@@ -734,7 +785,6 @@ export default function Home() {
         `Approving spender ${spender} for ${requiredAllowanceBaseUnits.toString()} base units...`
       );
 
-      const submittedAtMs = Date.now();
       const approveTxHash = await sendContractWithRetry(
         {
           address: CONTRACT_ADDRESSES.usdc,
@@ -749,8 +799,6 @@ export default function Home() {
           },
         }
       );
-
-      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
 
       const approvedInTime = await waitForReceiptWithTimeout(approveTxHash, TX_CONFIRM_TIMEOUT_MS, {
         onRateLimitRetry: (attempt) => {
@@ -786,9 +834,11 @@ export default function Home() {
 
   const handleConfirmSimulation = async ({
     maxSlippageBps,
+    sessionSpendLimitUsdc,
     dcaConfig,
   }: {
     maxSlippageBps: number;
+    sessionSpendLimitUsdc: string;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -803,6 +853,10 @@ export default function Home() {
 
     try {
       enforceActionCooldown();
+      const requestedSpendLimitBaseUnits = parseUsdcAmountToBaseUnits(
+        sessionSpendLimitUsdc,
+        'Session spending limit'
+      );
       const {
         connectedAddress,
         keeperSessionKeyAddress: configuredKeeperSessionKeyAddress,
@@ -890,7 +944,8 @@ export default function Home() {
       const delegationResult = await ensureSessionKeyDelegation(
         connectedAddress,
         configuredKeeperSessionKeyAddress,
-        sessionKeyRegistryAddress
+        sessionKeyRegistryAddress,
+        requestedSpendLimitBaseUnits
       );
 
       const selectedRecipeDefinition = RECIPES.find((recipe) => recipe.id === selectedRecipeSnapshot.id);
@@ -909,11 +964,13 @@ export default function Home() {
           ? { swapProvider: selectedRecipeSnapshot.swapProvider }
           : {}),
         maxSlippageBps,
-        maxUsdcSpendLimit: DEFAULT_MAX_USDC_SPEND_PER_TX,
+        maxUsdcSpendLimit: sessionSpendLimitUsdc.trim(),
         parametersJson: {
           delegationValidUntil: validUntil,
           checkIntervalHours,
           maxSlippageBps,
+          sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
+          sessionSpendLimitBaseUnits: requestedSpendLimitBaseUnits.toString(),
           ...(selectedRecipeSnapshot.recipeType === 'RECURRING_DCA' && normalizedDcaPayload
             ? {
                 totalBudgetUsdc: normalizedDcaPayload.totalDcaBudgetUsdc,
@@ -943,7 +1000,7 @@ export default function Home() {
           status: 'active',
           txLifecycleStatus: delegationResult.alreadyValid ? 'already-valid' : 'submitted',
           maxSlippageBps,
-          maxUsdcSpendPerTx: `${DEFAULT_MAX_USDC_SPEND_PER_TX} USDC`,
+          sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
           validUntil,
           txHash: delegationResult.txHash,
         },
@@ -963,10 +1020,9 @@ export default function Home() {
         `${selectedRecipeSnapshot.name} activated. ${dcaMessage}${delegationMessage}`
       );
 
-      if (delegationResult.txHash && delegationResult.submittedAtMs) {
-        trackConfirmationInBackground(
+      if (delegationResult.txHash) {
+        confirmTransactionInBackground(
           delegationResult.txHash,
-          delegationResult.submittedAtMs,
           () => {
             setActiveRecipes((previous) => {
               const current = previous[selectedRecipeSnapshot.id];
@@ -1035,7 +1091,6 @@ export default function Home() {
       enforceActionCooldown();
       const { connectedAddress } = await ensureWalletReady();
       const willPause = currentRecipe.status !== 'paused';
-      const submittedAtMs = Date.now();
       const txHash = await sendContractWithRetry(
         {
           address: CONTRACT_ADDRESSES.sharedExecutorProxy,
@@ -1052,8 +1107,6 @@ export default function Home() {
           },
         }
       );
-      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
-
       setActiveRecipes((previous) => {
         const existing = previous[recipeId];
         if (!existing || existing.status === 'revoked') {
@@ -1083,9 +1136,8 @@ export default function Home() {
         `Delegation ${willPause ? 'pause' : 'resume'} submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
       );
 
-      trackConfirmationInBackground(
+      confirmTransactionInBackground(
         txHash,
-        submittedAtMs,
         () => {
           setFeedbackMessage(
             `Delegation ${willPause ? 'paused' : 'resumed'} on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}`
@@ -1166,7 +1218,6 @@ export default function Home() {
         return;
       }
 
-      const submittedAtMs = Date.now();
       const txHash = await sendContractWithRetry(
         {
           address: sessionKeyRegistryAddress,
@@ -1183,8 +1234,6 @@ export default function Home() {
           },
         }
       );
-      pushFrontendMetric('timeToSubmittedMs', Date.now() - submittedAtMs);
-
       setActiveRecipes((previous) => {
         const existing = previous[recipeId];
         if (!existing) {
@@ -1218,9 +1267,8 @@ export default function Home() {
         `Delegation revoke submitted. Waiting for confirmation in background. View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}${keeperSyncWarning}`
       );
 
-      trackConfirmationInBackground(
+      confirmTransactionInBackground(
         txHash,
-        submittedAtMs,
         () => {
           setFeedbackMessage(`Delegation revoked on-chain (confirmed). View tx on ArcScan: https://testnet.arcscan.app/tx/${txHash}`);
         },
@@ -1336,6 +1384,37 @@ export default function Home() {
             </p>
           ) : null}
 
+          {Object.keys(activeRecipes).length > 0 ? (
+            <div className="rounded-xl border border-blue-800/60 bg-blue-950/20 p-4 space-y-2">
+              <div className="text-xs uppercase tracking-wider text-blue-300">{t('sessionQuotaSummaryTitle')}</div>
+              <p className="text-[11px] text-slate-400">{t('sessionQuotaSharedNotice')}</p>
+              {sessionSpendQuota ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-[11px] text-slate-500">{t('sessionQuotaLimit')}</div>
+                    <div className="font-mono text-sm text-slate-100">{sessionSpendQuota.maxUsdcSpendLimit} USDC</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-500">{t('sessionQuotaSpent')}</div>
+                    <div className="font-mono text-sm text-amber-300">{sessionSpendQuota.currentUsdcSpent} USDC</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-500">{t('sessionQuotaRemaining')}</div>
+                    <div className="font-mono text-sm text-emerald-300">{sessionSpendQuota.remainingUsdcSpendLimit} USDC</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-500">{t('sessionQuotaValidUntil')}</div>
+                    <div className="font-mono text-sm text-slate-100">
+                      {sessionSpendQuota.validUntil ? new Date(sessionSpendQuota.validUntil).toLocaleString(locale) : t('notAvailable')}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">{t('sessionQuotaUnavailable')}</p>
+              )}
+            </div>
+          ) : null}
+
           <div className="space-y-3">
             {RECIPES.map((recipe) => {
               const lifecycle = activeRecipes[recipe.id];
@@ -1361,8 +1440,8 @@ export default function Home() {
                       </div>
                     ) : null}
                     {lifecycle ? (
-                      <div className="text-xs text-slate-400">
-                        {t('perTxCap')}: <span className="font-mono text-slate-200">{lifecycle.maxUsdcSpendPerTx}</span>
+                      <div className="text-[11px] text-slate-500 italic">
+                        {t('sessionQuotaPerRecipeHint')}
                       </div>
                     ) : null}
                     {lifecycle?.txHash ? (
@@ -1406,26 +1485,6 @@ export default function Home() {
                 </div>
               );
             })}
-          </div>
-        </section>
-
-        <section className="glass-card p-4 text-xs text-slate-300 space-y-1">
-          <div className="font-semibold text-slate-100">{t('walletPerformance')}</div>
-          <div>
-            {t('timeToSubmitted')}:{' '}
-            <span className="font-mono text-slate-100">
-              {toP95(frontendMetrics.timeToSubmittedMs) !== null
-                ? `${toP95(frontendMetrics.timeToSubmittedMs)}ms`
-                : t('notAvailable')}
-            </span>
-          </div>
-          <div>
-            {t('timeToConfirmed')}:{' '}
-            <span className="font-mono text-slate-100">
-              {toP95(frontendMetrics.timeToConfirmedMs) !== null
-                ? `${toP95(frontendMetrics.timeToConfirmedMs)}ms`
-                : t('notAvailable')}
-            </span>
           </div>
         </section>
 

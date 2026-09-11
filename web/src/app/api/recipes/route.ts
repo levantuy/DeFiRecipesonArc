@@ -12,6 +12,7 @@ interface ActiveRecipeItem {
   targetProtocol: string;
   maxSlippageBps: number;
   maxUsdcSpendLimit: string;
+  sessionSpendLimitUsdc: string | null;
   status: string;
   createdAt: string;
   delegationTxHash?: string | null;
@@ -41,6 +42,8 @@ interface CreateRecipePayload {
   swapProvider?: string;
   maxSlippageBps?: number;
   maxUsdcSpendLimit?: string;
+  sessionSpendLimitUsdc?: string;
+  keeperSessionKeyAddress?: string;
   status?: string;
   txHash?: string;
   parametersJson?: Record<string, unknown>;
@@ -50,6 +53,10 @@ const DEFAULT_KEEPER_API_BASE_URL = 'http://localhost:8787';
 const DEFAULT_DCA_MAX_SLIPPAGE_BPS = 100;
 const MIN_DCA_SLIPPAGE_BPS = 10;
 const MAX_DCA_SLIPPAGE_BPS = 1000;
+// Cumulative session spend quota bounds (USDC display units), shared by every recipe under the
+// same userAddress + keeperSessionKeyAddress pair. Not a per-transaction cap.
+const MIN_SESSION_SPEND_LIMIT_USDC = '1';
+const MAX_SESSION_SPEND_LIMIT_USDC = '1000000';
 
 type DcaExecutionMode = 'PREFUND' | 'PULL';
 
@@ -131,6 +138,43 @@ function normalizeDcaExecutionMode(rawValue: unknown): DcaExecutionMode {
   return 'PULL';
 }
 
+function usdcDecimalStringToBaseUnits(normalized: string): bigint {
+  const [wholePartRaw, fractionalPartRaw = ''] = normalized.split('.');
+  const wholePart = BigInt(wholePartRaw);
+  const fractionalPart = BigInt((fractionalPartRaw + '000000').slice(0, 6));
+  return wholePart * 1_000_000n + fractionalPart;
+}
+
+function normalizeSessionSpendLimitUsdc(rawValue: unknown): { display: string; baseUnits: bigint } {
+  if (typeof rawValue !== 'string') {
+    throw new Error('sessionSpendLimitUsdc must be a string.');
+  }
+
+  const normalized = rawValue.trim();
+  if (normalized.length === 0) {
+    throw new Error('sessionSpendLimitUsdc is required.');
+  }
+
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error('sessionSpendLimitUsdc must be numeric with up to 6 decimals.');
+  }
+
+  const baseUnits = usdcDecimalStringToBaseUnits(normalized);
+  if (baseUnits <= 0n) {
+    throw new Error('sessionSpendLimitUsdc must be greater than 0.');
+  }
+
+  const minBaseUnits = usdcDecimalStringToBaseUnits(MIN_SESSION_SPEND_LIMIT_USDC);
+  const maxBaseUnits = usdcDecimalStringToBaseUnits(MAX_SESSION_SPEND_LIMIT_USDC);
+  if (baseUnits < minBaseUnits || baseUnits > maxBaseUnits) {
+    throw new Error(
+      `sessionSpendLimitUsdc must be between ${MIN_SESSION_SPEND_LIMIT_USDC} and ${MAX_SESSION_SPEND_LIMIT_USDC} USDC.`
+    );
+  }
+
+  return { display: normalized, baseUnits };
+}
+
 // In-memory active recipe storage for Web UI (syncs with keeper DB if available)
 const inMemoryRecipes: ActiveRecipeItem[] = [
   {
@@ -141,6 +185,7 @@ const inMemoryRecipes: ActiveRecipeItem[] = [
     targetProtocol: 'Arc Lending Protocol',
     maxSlippageBps: 50,
     maxUsdcSpendLimit: '1000',
+    sessionSpendLimitUsdc: '1000',
     status: 'ACTIVE',
     createdAt: new Date().toISOString(),
   },
@@ -152,6 +197,7 @@ const inMemoryRecipes: ActiveRecipeItem[] = [
     targetProtocol: 'Arc App Kit Swap API',
     maxSlippageBps: 100,
     maxUsdcSpendLimit: '500',
+    sessionSpendLimitUsdc: '500',
     status: 'ACTIVE',
     createdAt: new Date().toISOString(),
   },
@@ -163,6 +209,15 @@ function mapKeeperRecipeToActiveItem(recipe: KeeperRecipeItem): ActiveRecipeItem
     typeof parametersJson.maxSlippageBps === 'number' && Number.isInteger(parametersJson.maxSlippageBps)
       ? parametersJson.maxSlippageBps
       : DEFAULT_DCA_MAX_SLIPPAGE_BPS;
+
+  // Canonical field first; fall back to the legacy alias for records persisted before this change.
+  // Missing data on a genuinely new record is surfaced as null instead of silently defaulting to 500.
+  const sessionSpendLimitUsdc =
+    typeof parametersJson.sessionSpendLimitUsdc === 'string' && parametersJson.sessionSpendLimitUsdc.length > 0
+      ? parametersJson.sessionSpendLimitUsdc
+      : typeof parametersJson.maxUsdcSpendLimit === 'string' && parametersJson.maxUsdcSpendLimit.length > 0
+        ? parametersJson.maxUsdcSpendLimit
+        : null;
 
   return {
     id: typeof recipe.id === 'string' && recipe.id.length > 0 ? recipe.id : `recipe-${Date.now()}`,
@@ -179,10 +234,8 @@ function mapKeeperRecipeToActiveItem(recipe: KeeperRecipeItem): ActiveRecipeItem
           ? recipe.swapProvider
           : 'Arc Protocol'),
     maxSlippageBps,
-    maxUsdcSpendLimit:
-      typeof parametersJson.maxUsdcSpendLimit === 'string' && parametersJson.maxUsdcSpendLimit.length > 0
-        ? parametersJson.maxUsdcSpendLimit
-        : '500',
+    maxUsdcSpendLimit: sessionSpendLimitUsdc || 'unknown',
+    sessionSpendLimitUsdc,
     status: typeof recipe.status === 'string' ? recipe.status : 'ACTIVE',
     createdAt:
       typeof recipe.createdAt === 'string' && recipe.createdAt.length > 0
@@ -289,6 +342,45 @@ export async function POST(request: Request) {
       });
     }
 
+    if (body.action === 'sessionSpendQuota') {
+      if (!body.userAddress) {
+        return NextResponse.json(
+          { success: false, error: 'sessionSpendQuota requires userAddress.' },
+          { status: 400 }
+        );
+      }
+
+      const quotaUrl = new URL(`${getKeeperApiBaseUrl()}/recipes/session-quota`);
+      quotaUrl.searchParams.set('userAddress', body.userAddress);
+      if (body.keeperSessionKeyAddress) {
+        quotaUrl.searchParams.set('sessionKeyAddress', body.keeperSessionKeyAddress);
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const authToken = getKeeperApiAuthToken();
+      if (authToken.length > 0) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+
+      const quotaResponse = await fetch(quotaUrl.toString(), {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+      });
+      const quotaData = (await quotaResponse.json().catch(() => null)) as
+        | { success?: boolean; quota?: Record<string, unknown>; error?: string }
+        | null;
+
+      if (!quotaResponse.ok || !quotaData?.success) {
+        const errorMessage = quotaData?.error || `Failed to fetch session spend quota (status ${quotaResponse.status}).`;
+        return NextResponse.json({ success: false, error: errorMessage }, { status: 502 });
+      }
+
+      return NextResponse.json({ success: true, quota: quotaData.quota ?? null });
+    }
+
     if (body.action === 'allowancePrecheck') {
       if (!body.userAddress || body.recipeType !== 'RECURRING_DCA') {
         return NextResponse.json(
@@ -347,6 +439,15 @@ export async function POST(request: Request) {
       const maxSlippageBps = normalizeMaxSlippageBps(requestedSlippage);
       requestParameters.maxSlippageBps = maxSlippageBps;
 
+      const requestedSessionSpendLimit =
+        body.sessionSpendLimitUsdc ?? requestParameters.sessionSpendLimitUsdc ?? body.maxUsdcSpendLimit ?? '500';
+      const { display: sessionSpendLimitUsdc, baseUnits: sessionSpendLimitBaseUnits } =
+        normalizeSessionSpendLimitUsdc(requestedSessionSpendLimit);
+      requestParameters.sessionSpendLimitUsdc = sessionSpendLimitUsdc;
+      requestParameters.sessionSpendLimitBaseUnits = sessionSpendLimitBaseUnits.toString();
+      // Backward-compatible alias for older keeper/read paths that still key off maxUsdcSpendLimit.
+      requestParameters.maxUsdcSpendLimit = sessionSpendLimitUsdc;
+
       if (body.recipeType === 'RECURRING_DCA') {
         const requestedTotalBudget = requestParameters.totalBudgetUsdc;
         const requestedPerExecution = requestParameters.perExecutionAmountUsdc;
@@ -398,7 +499,8 @@ export async function POST(request: Request) {
         recipeName: body.recipeName || 'Custom Recipe',
         targetProtocol: body.targetProtocol || body.swapProvider || body.targetProtocolAddress || 'Arc Protocol',
         maxSlippageBps,
-        maxUsdcSpendLimit: body.maxUsdcSpendLimit || '1000',
+        maxUsdcSpendLimit: sessionSpendLimitUsdc,
+        sessionSpendLimitUsdc,
         status: 'ACTIVE',
         createdAt: new Date().toISOString(),
         delegationTxHash:
@@ -442,7 +544,8 @@ export async function POST(request: Request) {
       recipeName: body.recipeName || 'Custom Recipe',
       targetProtocol: body.targetProtocol || 'Arc Protocol',
       maxSlippageBps: body.maxSlippageBps || 50,
-      maxUsdcSpendLimit: body.maxUsdcSpendLimit || '1000',
+      maxUsdcSpendLimit: body.maxUsdcSpendLimit || body.sessionSpendLimitUsdc || '500',
+      sessionSpendLimitUsdc: body.sessionSpendLimitUsdc || body.maxUsdcSpendLimit || null,
       status: 'ACTIVE',
       createdAt: new Date().toISOString(),
     };

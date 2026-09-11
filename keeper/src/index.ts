@@ -13,6 +13,7 @@ import {
 } from './schedulers/queueScheduler';
 import { startCronScheduler, stopCronScheduler } from './schedulers/cronScheduler';
 import {
+  getSessionSpendQuota,
   listActiveRecipes,
   listExecutionLogs,
   precheckDcaAllowance,
@@ -333,6 +334,22 @@ export function createHealthServer(port: number) {
         const payload = await listActiveRecipes({
           userAddress: requestUrl.searchParams.get('userAddress') || undefined,
           limit: requestUrl.searchParams.get('limit') || undefined,
+        });
+        setJsonResponse(res, 200, payload);
+      } catch (error: unknown) {
+        setJsonResponse(res, 400, {
+          success: false,
+          error: getErrorMessage(error),
+        });
+      }
+      return;
+    }
+
+    if (pathName === '/recipes/session-quota' && method === 'GET') {
+      try {
+        const payload = await getSessionSpendQuota({
+          userAddress: requestUrl.searchParams.get('userAddress') || undefined,
+          sessionKeyAddress: requestUrl.searchParams.get('sessionKeyAddress') || undefined,
         });
         setJsonResponse(res, 200, payload);
       } catch (error: unknown) {

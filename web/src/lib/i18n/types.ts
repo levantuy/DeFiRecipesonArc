@@ -22,7 +22,6 @@ export interface Dictionary {
   status: string;
   txLifecycle: string;
   expires: string;
-  perTxCap: string;
   restoredWithoutTx: string;
   submitting: string;
   resume: string;
@@ -57,6 +56,18 @@ export interface Dictionary {
   swapProvider: string;
   parametersProtection: string;
   maxSlippage: string;
+  sessionSpendLimitLabel: string;
+  sessionSpendLimitHint: string;
+  sessionSpendLimitPlaceholder: string;
+  sessionSpendRenewNotice: string;
+  sessionQuotaSummaryTitle: string;
+  sessionQuotaSharedNotice: string;
+  sessionQuotaLimit: string;
+  sessionQuotaSpent: string;
+  sessionQuotaRemaining: string;
+  sessionQuotaValidUntil: string;
+  sessionQuotaUnavailable: string;
+  sessionQuotaPerRecipeHint: string;
   totalDcaBudget: string;
   totalAllocation: string;
   perExecution: string;
