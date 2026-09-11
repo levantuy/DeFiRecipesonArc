@@ -11,7 +11,7 @@ export interface AccountLink {
   disabled?: boolean;
 }
 
-export const APP_VERSION = "v0.1.0";
+export const APP_VERSION = "v0.1.1";
 
 function appLink(envKey: string, fallback: string): string {
   const value = process.env[envKey];

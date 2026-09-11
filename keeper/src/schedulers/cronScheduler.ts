@@ -32,7 +32,11 @@ const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompoun
 import { getKeeperAccount, getKeeperWalletClient } from '../index';
 import { createDcaSwapRouteClientFromRuntime } from '../integrations/circle/dcaSwapRouteClient';
 const MIN_CHECK_INTERVAL_HOURS = 1;
-const MAX_CHECK_INTERVAL_HOURS = 24 * 30;
+const MAX_CHECK_INTERVAL_HOURS = 720;
+const DEFAULT_CHECK_INTERVAL_HOURS: Record<string, number> = {
+  RECURRING_DCA: 24,
+  AUTO_COMPOUNDER: 168,
+};
 const SIMULATION_RATE_LIMIT_BACKOFF_MS = RUNTIME_CONFIG.schedulerSimulationBackoffMs;
 const dedicatedReadClientCache = new Map<string, ReturnType<typeof createPublicClient>>();
 
@@ -132,7 +136,7 @@ const DCA_SWAP_ABI = [
 ] as const;
 
 interface RecipeParameters {
-  checkIntervalHours?: number;
+  checkIntervalHours?: unknown;
   maxSlippageBps?: number;
   targetAssetSymbol?: string;
 }
@@ -219,7 +223,7 @@ function parseRecipeParameters(parametersJson: unknown): RecipeParameters {
   const raw = parametersJson as Record<string, unknown>;
   const parsed: RecipeParameters = {};
 
-  if (typeof raw.checkIntervalHours === 'number') {
+  if (raw.checkIntervalHours !== undefined) {
     parsed.checkIntervalHours = raw.checkIntervalHours;
   }
 
@@ -262,14 +266,18 @@ function resolveDcaTargetAssetSymbol(
   };
 }
 
-function parseCheckIntervalHours(intervalHours?: number): number {
-  const value = intervalHours ?? 24;
-  if (!Number.isFinite(value) || !Number.isInteger(value)) {
-    throw new Error('checkIntervalHours must be a whole number of hours.');
+export function parseCheckIntervalHours(intervalHours: unknown, recipeType: RecipeType, context = ''): number {
+  const value = intervalHours === undefined
+    ? DEFAULT_CHECK_INTERVAL_HOURS[recipeType] ?? 24
+    : typeof intervalHours === 'string'
+      ? Number(intervalHours.trim())
+      : intervalHours;
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`Invalid checkIntervalHours ${context}: must be a whole number of hours.`);
   }
   if (value < MIN_CHECK_INTERVAL_HOURS || value > MAX_CHECK_INTERVAL_HOURS) {
     throw new Error(
-      `checkIntervalHours must be between ${MIN_CHECK_INTERVAL_HOURS} and ${MAX_CHECK_INTERVAL_HOURS}.`
+      `Invalid checkIntervalHours ${context}: must be between ${MIN_CHECK_INTERVAL_HOURS} and ${MAX_CHECK_INTERVAL_HOURS}.`
     );
   }
   return value;
@@ -996,8 +1004,7 @@ export async function pollAndTriggerActiveRecipes() {
         const diffHours = (now.getTime() - lastExecuted.getTime()) / (1000 * 60 * 60);
         const recipeParams = parseRecipeParameters(recipe.parametersJson);
 
-        // Default interval threshold: 24 hours between triggers unless overridden
-        const intervalHours = parseCheckIntervalHours(recipeParams.checkIntervalHours);
+        const intervalHours = parseCheckIntervalHours(recipeParams.checkIntervalHours, recipe.recipeType, context);
         if (diffHours < intervalHours) {
           console.log(`[Cron Scheduler] Recipe not due yet ${context} elapsedHours=${diffHours.toFixed(2)} intervalHours=${intervalHours}`);
           continue; // Not due yet

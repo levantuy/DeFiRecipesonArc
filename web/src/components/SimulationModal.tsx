@@ -13,9 +13,11 @@ import {
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { en } from '@/lib/i18n/en';
 import { vi } from '@/lib/i18n/vi';
+import { parseIntervalHours } from '@/lib/intervalConfig';
 
 export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA';
 export type SwapProvider = 'ARC_APP_KIT_SWAP';
+export type IntervalPreset = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
 
 export interface RecipeConfig {
   id: string;
@@ -33,6 +35,12 @@ export interface RecipeConfig {
   expectedNetApy: string;
   riskWarning: string;
   routeSteps: string[];
+  defaultIntervalHours?: number;
+}
+
+export interface RecipeActivationConfig {
+  intervalHours: number;
+  intervalPreset: IntervalPreset;
 }
 
 export interface DcaAllowancePrecheckResult {
@@ -64,6 +72,8 @@ interface SimulationModalProps {
   onConfirm: (payload: {
     maxSlippageBps: number;
     sessionSpendLimitUsdc: string;
+    intervalHours: number;
+    intervalPreset: IntervalPreset;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -100,6 +110,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   const [sessionSpendLimitUsdc, setSessionSpendLimitUsdc] = useState(DEFAULT_SESSION_SPEND_LIMIT_USDC);
   const [totalDcaBudgetUsdc, setTotalDcaBudgetUsdc] = useState(recipe?.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
   const [perExecutionUsdc, setPerExecutionUsdc] = useState(recipe?.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
+  const [intervalHours, setIntervalHours] = useState(String(recipe?.defaultIntervalHours ?? 24));
+  const [intervalPreset, setIntervalPreset] = useState<IntervalPreset>('CUSTOM');
   const executionMode: DcaExecutionMode = 'PULL';
   const [allowanceCheck, setAllowanceCheck] = useState<DcaAllowancePrecheckResult | null>(null);
   const [allowanceCheckError, setAllowanceCheckError] = useState<string>('');
@@ -111,6 +123,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       setSessionSpendLimitUsdc(DEFAULT_SESSION_SPEND_LIMIT_USDC);
       setTotalDcaBudgetUsdc(recipe.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
       setPerExecutionUsdc(recipe.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
+      setIntervalHours(String(recipe.defaultIntervalHours ?? (recipe.recipeType === 'AUTO_COMPOUNDER' ? 168 : 24)));
+      setIntervalPreset('CUSTOM');
       setAllowanceCheck(null);
       setAllowanceCheckError('');
       setIsCheckingAllowance(false);
@@ -126,6 +140,13 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   }
   let dcaValidationError: string | null = null;
   let estimatedRuns: bigint = 0n;
+  let intervalValidationError: string | null = null;
+  try {
+    parseIntervalHours(intervalHours);
+  } catch (error: unknown) {
+    intervalValidationError = error instanceof Error ? error.message : 'Invalid interval.';
+  }
+  let sessionQuotaError: string | null = null;
 
   if (isDcaRecipe && recipe) {
     try {
@@ -137,6 +158,9 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       estimatedRuns = estimateDcaRuns(parsed.totalDcaBudgetBaseUnits, parsed.perExecutionBaseUnits);
       if (estimatedRuns <= 0n) {
         dcaValidationError = t('estimatedRunsZero');
+      }
+      if (Number(sessionSpendLimitUsdc) < Number(totalDcaBudgetUsdc)) {
+        sessionQuotaError = 'Session spending limit must be at least the total DCA budget.';
       }
     } catch (error: unknown) {
       dcaValidationError = error instanceof Error ? error.message : t('invalidDcaConfig');
@@ -304,6 +328,45 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       </div>
                     ) : null}
                   </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                      <span>Interval Hours</span>
+                      <span className="font-mono text-emerald-400">{intervalHours || 'Not set'}</span>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={intervalHours}
+                      onChange={(event) => {
+                        setIntervalPreset('CUSTOM');
+                        setIntervalHours(event.target.value);
+                      }}
+                      placeholder="Enter interval in hours"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                    />
+                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {([
+                        ['DAILY', 'Daily: 24 hours', '24'],
+                        ['WEEKLY', 'Weekly: 168 hours', '168'],
+                        ['MONTHLY', 'Monthly: 720 hours', '720'],
+                        ['CUSTOM', 'Custom', intervalHours],
+                      ] as const).map(([preset, label, value]) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => {
+                            setIntervalPreset(preset);
+                            if (preset !== 'CUSTOM') setIntervalHours(value);
+                          }}
+                          className={`rounded-lg border px-2 py-1.5 text-xs ${intervalPreset === preset ? 'border-blue-400 bg-blue-950/60 text-blue-200' : 'border-slate-700 text-slate-400'}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">Use a whole number from 1 to 720 hours.</div>
+                    {intervalValidationError ? <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">{intervalValidationError}</div> : null}
+                  </div>
                   {isDcaRecipe ? (
                     <div>
                       <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
@@ -333,7 +396,10 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       </div>
                       <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
                         {t('estimatedRuns')}: <span className="font-mono text-emerald-400">{estimatedRuns.toString()}</span>
+                        <div>Estimated total duration: <span className="font-mono text-emerald-400">{estimatedRuns > 0n ? (Number(estimatedRuns) - 1) * Number(intervalHours || 0) : 0} hours</span></div>
                       </div>
+                      {sessionQuotaError ? <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">{sessionQuotaError}</div> : null}
+                      {estimatedRuns > 0n && (Number(estimatedRuns) - 1) * Number(intervalHours || 0) > 30 * 24 * 0.9 ? <div className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-[11px] text-amber-200">The session key may expire before the DCA completes. The session key will not be renewed automatically.</div> : null}
                       {dcaValidationError ? (
                         <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">
                           {dcaValidationError}
@@ -451,13 +517,15 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isConfirming || Boolean(sessionSpendLimitValidationError) || Boolean(isDcaRecipe && dcaValidationError)}
+                disabled={isConfirming || Boolean(sessionSpendLimitValidationError) || Boolean(intervalValidationError) || Boolean(isDcaRecipe && (dcaValidationError || sessionQuotaError))}
                 onClick={async (event) => {
                   event.stopPropagation();
                   const clampedSlippage = Math.min(100, Math.max(10, maxSlippageBps));
                   const payload: {
                     maxSlippageBps: number;
                     sessionSpendLimitUsdc: string;
+                    intervalHours: number;
+                    intervalPreset: IntervalPreset;
                     dcaConfig?: {
                       totalDcaBudgetUsdc: string;
                       perExecutionUsdc: string;
@@ -468,6 +536,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   } = {
                     maxSlippageBps: clampedSlippage,
                     sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
+                    intervalHours: parseIntervalHours(intervalHours),
+                    intervalPreset,
                   };
 
                   // Ensure session spend limit parses correctly before submitting activation.

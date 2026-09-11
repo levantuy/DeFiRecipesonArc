@@ -63,7 +63,7 @@ vi.mock('../integrations/circle/dcaSwapRouteClient', () => ({
   }),
 }));
 
-import { __resetCronSchedulerStateForTests, pollAndTriggerActiveRecipes } from '../schedulers/cronScheduler';
+import { __resetCronSchedulerStateForTests, parseCheckIntervalHours, pollAndTriggerActiveRecipes } from '../schedulers/cronScheduler';
 
 function makeActiveRecipe(overrides: Record<string, unknown>) {
   return {
@@ -72,13 +72,26 @@ function makeActiveRecipe(overrides: Record<string, unknown>) {
     recipeType: RecipeType.AUTO_COMPOUNDER,
     status: RecipeStatus.ACTIVE,
     targetProtocol: '0x2222222222222222222222222222222222222222',
-    parametersJson: {},
+    parametersJson: { checkIntervalHours: 24 },
     lastExecutedAt: new Date(Date.now() - 48 * 60 * 60 * 1000),
     ...overrides,
   };
 }
 
 describe('Cron Scheduler Recipe Triggering', () => {
+  it.each([1, 6, 12, 48, 720])('accepts custom interval %s hours', (intervalHours) => {
+    expect(parseCheckIntervalHours(intervalHours, RecipeType.RECURRING_DCA)).toBe(intervalHours);
+  });
+
+  it.each([0, -1, 721, 1.5, 'invalid'])('rejects invalid interval %s', (intervalHours) => {
+    expect(() => parseCheckIntervalHours(intervalHours, RecipeType.RECURRING_DCA)).toThrow();
+  });
+
+  it('uses recipe-specific defaults for missing intervals', () => {
+    expect(parseCheckIntervalHours(undefined, RecipeType.RECURRING_DCA)).toBe(24);
+    expect(parseCheckIntervalHours(undefined, RecipeType.AUTO_COMPOUNDER)).toBe(168);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     __resetCronSchedulerStateForTests();

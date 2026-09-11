@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { parseIntervalHours } from '@/lib/intervalConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,8 @@ interface ActiveRecipeItem {
   createdAt: string;
   delegationTxHash?: string | null;
   delegationValidUntil?: string | null;
+  checkIntervalHours?: number;
+  intervalPreset?: string;
 }
 
 interface KeeperRecipeItem {
@@ -57,6 +60,10 @@ const MAX_DCA_SLIPPAGE_BPS = 1000;
 // same userAddress + keeperSessionKeyAddress pair. Not a per-transaction cap.
 const MIN_SESSION_SPEND_LIMIT_USDC = '1';
 const MAX_SESSION_SPEND_LIMIT_USDC = '1000000';
+const DEFAULT_INTERVAL_HOURS: Record<string, number> = {
+  RECURRING_DCA: 24,
+  AUTO_COMPOUNDER: 168,
+};
 
 type DcaExecutionMode = 'PREFUND' | 'PULL';
 
@@ -253,6 +260,13 @@ function mapKeeperRecipeToActiveItem(recipe: KeeperRecipeItem): ActiveRecipeItem
         : typeof parametersJson.delegationValidUntil === 'string'
           ? parametersJson.delegationValidUntil
           : null,
+    checkIntervalHours:
+      typeof parametersJson.checkIntervalHours === 'number'
+        ? parametersJson.checkIntervalHours
+        : parametersJson.checkIntervalHours === undefined
+          ? DEFAULT_INTERVAL_HOURS[recipe.recipeType || ''] ?? 24
+          : undefined,
+    intervalPreset: typeof parametersJson.intervalPreset === 'string' ? parametersJson.intervalPreset : undefined,
   };
 }
 
@@ -447,6 +461,11 @@ export async function POST(request: Request) {
       requestParameters.sessionSpendLimitBaseUnits = sessionSpendLimitBaseUnits.toString();
       // Backward-compatible alias for older keeper/read paths that still key off maxUsdcSpendLimit.
       requestParameters.maxUsdcSpendLimit = sessionSpendLimitUsdc;
+      requestParameters.checkIntervalHours = parseIntervalHours(
+        requestParameters.checkIntervalHours === undefined
+          ? DEFAULT_INTERVAL_HOURS[body.recipeType] ?? 24
+          : requestParameters.checkIntervalHours
+      );
 
       if (body.recipeType === 'RECURRING_DCA') {
         const requestedTotalBudget = requestParameters.totalBudgetUsdc;

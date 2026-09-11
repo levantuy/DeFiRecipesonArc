@@ -19,6 +19,8 @@ import {
 import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { parseUsdcAmountToBaseUnits } from '@/lib/dcaConfig';
+import { parseIntervalHours } from '@/lib/intervalConfig';
+import type { IntervalPreset } from '@/components/SimulationModal';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { FooterLinkIcon } from './layout-icons';
@@ -53,6 +55,8 @@ interface ActiveRecipeState {
   sessionSpendLimitUsdc: string;
   validUntil: string;
   txHash: `0x${string}` | null;
+  checkIntervalHours?: number;
+  intervalPreset?: string;
 }
 
 interface SessionSpendQuotaSnapshot {
@@ -112,6 +116,8 @@ interface PersistedActiveRecipeApiItem {
   delegationTxHash?: string | null;
   delegationValidUntil?: string | null;
   createdAt?: string;
+  checkIntervalHours?: number;
+  intervalPreset?: string;
 }
 
 interface PersistedActiveRecipesApiResponse {
@@ -501,6 +507,8 @@ export default function Home() {
             txHash: recipe.delegationTxHash && /^0x[a-fA-F0-9]{64}$/.test(recipe.delegationTxHash)
               ? recipe.delegationTxHash as `0x${string}`
               : null,
+            checkIntervalHours: recipe.checkIntervalHours,
+            intervalPreset: recipe.intervalPreset,
           };
         }
 
@@ -836,9 +844,13 @@ export default function Home() {
     maxSlippageBps,
     sessionSpendLimitUsdc,
     dcaConfig,
+    intervalHours,
+    intervalPreset,
   }: {
     maxSlippageBps: number;
     sessionSpendLimitUsdc: string;
+    intervalHours: number;
+    intervalPreset: IntervalPreset;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -948,8 +960,7 @@ export default function Home() {
         requestedSpendLimitBaseUnits
       );
 
-      const selectedRecipeDefinition = RECIPES.find((recipe) => recipe.id === selectedRecipeSnapshot.id);
-      const checkIntervalHours = selectedRecipeDefinition?.defaultIntervalHours || 24;
+      const checkIntervalHours = parseIntervalHours(intervalHours);
 
       await syncKeeperRecipe({
         action: 'register',
@@ -968,6 +979,7 @@ export default function Home() {
         parametersJson: {
           delegationValidUntil: validUntil,
           checkIntervalHours,
+          intervalPreset,
           maxSlippageBps,
           sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
           sessionSpendLimitBaseUnits: requestedSpendLimitBaseUnits.toString(),
@@ -1437,6 +1449,12 @@ export default function Home() {
                     {lifecycle ? (
                       <div className="text-xs text-slate-400">
                         {t('expires')}: <span className="font-mono text-slate-200">{new Date(lifecycle.validUntil).toLocaleString(locale)}</span>
+                      </div>
+                    ) : null}
+                    {lifecycle?.checkIntervalHours ? (
+                      <div className="text-xs text-slate-400">
+                        Interval Hours: <span className="font-mono text-slate-200">{lifecycle.checkIntervalHours}</span>
+                        {lifecycle.intervalPreset ? ` (${lifecycle.intervalPreset})` : ''}
                       </div>
                     ) : null}
                     {lifecycle ? (

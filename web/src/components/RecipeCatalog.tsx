@@ -21,7 +21,7 @@ export const RECIPES: (RecipeConfig & { description: string; risk: string; apy: 
     routeSteps: ['Claim ARC rewards on Arc Lending', 'Swap ARC to USDC via Arc App Kit Swap', 'Deposit USDC back to Arc Lending'],
     risk: 'Low Risk',
     apy: '8.4% APY',
-    defaultIntervalHours: 24 * 7,
+    defaultIntervalHours: 168,
   },
   {
     id: 'recipe-recurring-dca',
