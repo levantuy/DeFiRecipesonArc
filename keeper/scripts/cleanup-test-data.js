@@ -70,12 +70,6 @@ async function main() {
       values: [userAddress],
     });
 
-    const sessionKeyCountBefore = await client.query({
-      name: 'cleanup-count-session-keys-before',
-      text: 'SELECT COUNT(*)::int AS count FROM "SessionKey" WHERE "userAddress" = $1',
-      values: [userAddress],
-    });
-
     let deletedUsers = 0;
     if (existing.rows.length > 0) {
       const deleted = await client.query({
@@ -97,7 +91,6 @@ async function main() {
           removedByCascade: {
             activeRecipes: recipeCountBefore.rows[0]?.count || 0,
             executionLogs: logCountBefore.rows[0]?.count || 0,
-            sessionKeys: sessionKeyCountBefore.rows[0]?.count || 0,
           },
         },
         null,
