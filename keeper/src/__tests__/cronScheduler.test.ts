@@ -6,6 +6,7 @@ import { RUNTIME_CONFIG } from '../config/runtime';
 const {
   findByStatusMock,
   updateParametersJsonMock,
+  claimExecutionSlotMock,
   queueAddMock,
   simulateRecipeStepMock,
   getBytecodeMock,
@@ -17,6 +18,7 @@ const {
   return {
     findByStatusMock: vi.fn(),
     updateParametersJsonMock: vi.fn(),
+    claimExecutionSlotMock: vi.fn(),
     queueAddMock: vi.fn(),
     simulateRecipeStepMock: vi.fn(),
     getBytecodeMock: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock('../db/repositories/recipesRepository', () => ({
   recipesRepository: {
     findByStatus: findByStatusMock,
     updateParametersJson: updateParametersJsonMock,
+    claimExecutionSlot: claimExecutionSlotMock,
   },
 }));
 
@@ -97,6 +100,7 @@ describe('Cron Scheduler Recipe Triggering', () => {
     __resetCronSchedulerStateForTests();
     findByStatusMock.mockResolvedValue([]);
     updateParametersJsonMock.mockResolvedValue(undefined);
+    claimExecutionSlotMock.mockResolvedValue(true);
     simulateRecipeStepMock.mockResolvedValue({ success: true, estimatedGasUsdc: 90000n });
     getBytecodeMock.mockResolvedValue('0x1234');
     readContractMock.mockResolvedValue(true);
@@ -208,6 +212,25 @@ describe('Cron Scheduler Recipe Triggering', () => {
     const jobData = queueAddMock.mock.calls[0][1];
     expect(jobData.recipeId).toBe('dca-1');
     expect(jobData.minAmountOut).toBe('50000000');
+  });
+
+  it('enqueues a due DCA recipe only once when a later poll cannot claim its interval', async () => {
+    findByStatusMock.mockResolvedValue([
+      makeActiveRecipe({
+        id: 'dca-single-execution',
+        recipeType: RecipeType.RECURRING_DCA,
+        swapProvider: 'ARC_APP_KIT_SWAP',
+        lastExecutedAt: null,
+        parametersJson: { totalBudgetUsdc: '100', perExecutionAmountUsdc: '5', mode: 'PULL' },
+      }),
+    ]);
+    claimExecutionSlotMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    await pollAndTriggerActiveRecipes();
+    await pollAndTriggerActiveRecipes();
+
+    expect(claimExecutionSlotMock).toHaveBeenCalledTimes(2);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 
   it('applies dynamic maxSlippageBps from parametersJson when resolving DCA route', async () => {

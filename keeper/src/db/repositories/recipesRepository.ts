@@ -334,6 +334,34 @@ export const recipesRepository = {
       values: [recipeId, executedAt, executedAt],
     });
   },
+
+  async claimExecutionSlot(recipeId: string, claimedAt: Date, intervalHours: number): Promise<boolean> {
+    const intervalStart = new Date(claimedAt.getTime() - intervalHours * 60 * 60 * 1000);
+    const rows = await query<ActiveRecipeRow>({
+      name: 'recipe-claim-execution-slot',
+      text: `
+        UPDATE "ActiveRecipe"
+        SET "lastExecutedAt" = $2, "updatedAt" = $2
+        WHERE id = $1
+          AND status = 'ACTIVE'::"RecipeStatus"
+          AND ("lastExecutedAt" IS NULL OR "lastExecutedAt" <= $3)
+        RETURNING
+          id,
+          "userAddress",
+          "recipeType",
+          status,
+          "targetProtocol",
+          "swapProvider",
+          "parametersJson",
+          "lastExecutedAt",
+          "createdAt",
+          "updatedAt"
+      `,
+      values: [recipeId, claimedAt, intervalStart],
+    });
+
+    return rows.length > 0;
+  },
 };
 
 async function insertUserIfMissing(client: PoolClient, userAddress: string): Promise<void> {

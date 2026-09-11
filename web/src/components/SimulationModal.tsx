@@ -61,8 +61,7 @@ export interface DcaAllowancePrecheckResult {
 
 const DCA_DEFAULT_TOTAL_BUDGET_USDC = '50';
 const DCA_DEFAULT_PER_EXECUTION_USDC = '5';
-const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9';
-const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b';
+const SHARED_EXECUTOR_PROXY_SPENDER = '0xcbd2de404cb02c45b8688883e4321f887a6f2fc2';
 export const DEFAULT_SESSION_SPEND_LIMIT_USDC = '500';
 
 interface SimulationModalProps {
@@ -406,7 +405,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                         </div>
                       ) : null}
                       <div className="mt-2 rounded-lg border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200">
-                        {t('allowancePolicy')} {DCA_USDC_SPENDER} and transfer proxy {DCA_USDC_PROXY_SPENDER}.
+                        {t('allowancePolicy')} SharedExecutorProxy {SHARED_EXECUTOR_PROXY_SPENDER}.
                       </div>
                       <div className="mt-2 rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-200 space-y-2">
                         <div className="flex items-center justify-between">

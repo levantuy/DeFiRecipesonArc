@@ -28,9 +28,6 @@ import { APP_VERSION, footerLinks } from './layout-config';
 
 // Cumulative USDC spend quota shared across every recipe for the same userAddress + keeper session key pair.
 
-const DCA_USDC_SPENDER = '0xf992efcb5fa2ed7cb48310d9dd8cb4ce5fb7ddc9' as const;
-const DCA_USDC_PROXY_SPENDER = '0xc06ebbefd94032b85424d51906e2a335efae264b' as const;
-const DCA_USDC_ALLOWANCE_SPENDERS = [DCA_USDC_SPENDER, DCA_USDC_PROXY_SPENDER] as const;
 const DEFAULT_SESSION_VALIDITY_MS = 30 * 24 * 60 * 60 * 1000;
 const MIN_SESSION_SPEND_HEADROOM = parseUnits('10', 6);
 const TX_SEND_MAX_RETRIES = 7;
@@ -764,79 +761,71 @@ export default function Home() {
     connectedAddress: `0x${string}`,
     requiredAllowanceBaseUnits: bigint,
     executionMode: DcaExecutionMode,
-    extraSpenders?: readonly `0x${string}`[]
+    spender: `0x${string}`
   ): Promise<void> => {
     if (!publicClient) {
       throw new Error('Public client is not ready yet. Please wait a moment and retry.');
     }
 
-    const spenders = Array.from(
-      new Set(
-        [...DCA_USDC_ALLOWANCE_SPENDERS, ...(extraSpenders || [])].map((spender) => spender.toLowerCase())
-      )
-    ) as `0x${string}`[];
+    const currentAllowance = await publicClient.readContract({
+      address: CONTRACT_ADDRESSES.usdc,
+      abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
+      functionName: 'allowance',
+      args: [connectedAddress, spender],
+    });
 
-    for (const spender of spenders) {
-      const currentAllowance = await publicClient.readContract({
+    if (currentAllowance >= requiredAllowanceBaseUnits) {
+      return;
+    }
+
+    setFeedbackMessage(
+      `USDC allowance is below required DCA ${executionMode === 'PREFUND' ? 'prefund' : 'pull'} budget. ` +
+      `Approving spender ${spender} for ${requiredAllowanceBaseUnits.toString()} base units...`
+    );
+
+    const approveTxHash = await sendContractWithRetry(
+      {
         address: CONTRACT_ADDRESSES.usdc,
         abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
-        functionName: 'allowance',
-        args: [connectedAddress, spender],
-      });
-
-      if (currentAllowance >= requiredAllowanceBaseUnits) {
-        continue;
+        functionName: 'approve',
+        args: [spender, requiredAllowanceBaseUnits],
+        chainId: ARC_TESTNET_CHAIN_ID,
+      },
+      {
+        onRetry: (attempt, maxAttempts) => {
+          setFeedbackMessage(`Arc RPC is busy. Retrying USDC approve submission (${attempt}/${maxAttempts - 1})...`);
+        },
       }
+    );
 
+    const approvedInTime = await waitForReceiptWithTimeout(approveTxHash, TX_CONFIRM_TIMEOUT_MS, {
+      onRateLimitRetry: (attempt) => {
+        setFeedbackMessage(`Approve submitted. Network busy while confirming approve (retry #${attempt})...`);
+      },
+    });
+
+    const refreshedAllowance = await publicClient.readContract({
+      address: CONTRACT_ADDRESSES.usdc,
+      abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
+      functionName: 'allowance',
+      args: [connectedAddress, spender],
+    });
+
+    if (refreshedAllowance < requiredAllowanceBaseUnits) {
+      throw new Error(
+        `USDC approve is not confirmed yet. Scheduler will continue to skip enqueue until allowance reaches ` +
+        `${requiredAllowanceBaseUnits.toString()} base units for spender ${spender}.`
+      );
+    }
+
+    if (approvedInTime) {
       setFeedbackMessage(
-        `USDC allowance is below required DCA ${executionMode === 'PREFUND' ? 'prefund' : 'pull'} budget. ` +
-        `Approving spender ${spender} for ${requiredAllowanceBaseUnits.toString()} base units...`
+        `USDC approve confirmed for spender ${spender}. Continuing recipe activation...`
       );
-
-      const approveTxHash = await sendContractWithRetry(
-        {
-          address: CONTRACT_ADDRESSES.usdc,
-          abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
-          functionName: 'approve',
-          args: [spender, requiredAllowanceBaseUnits],
-          chainId: ARC_TESTNET_CHAIN_ID,
-        },
-        {
-          onRetry: (attempt, maxAttempts) => {
-            setFeedbackMessage(`Arc RPC is busy. Retrying USDC approve submission (${attempt}/${maxAttempts - 1})...`);
-          },
-        }
+    } else {
+      setFeedbackMessage(
+        `USDC approve propagated in allowance state for spender ${spender}. Continuing recipe activation...`
       );
-
-      const approvedInTime = await waitForReceiptWithTimeout(approveTxHash, TX_CONFIRM_TIMEOUT_MS, {
-        onRateLimitRetry: (attempt) => {
-          setFeedbackMessage(`Approve submitted. Network busy while confirming approve (retry #${attempt})...`);
-        },
-      });
-
-      const refreshedAllowance = await publicClient.readContract({
-        address: CONTRACT_ADDRESSES.usdc,
-        abi: ERC20_ALLOWANCE_AND_APPROVE_ABI,
-        functionName: 'allowance',
-        args: [connectedAddress, spender],
-      });
-
-      if (refreshedAllowance < requiredAllowanceBaseUnits) {
-        throw new Error(
-          `USDC approve is not confirmed yet. Scheduler will continue to skip enqueue until allowance reaches ` +
-          `${requiredAllowanceBaseUnits.toString()} base units for spender ${spender}.`
-        );
-      }
-
-      if (approvedInTime) {
-        setFeedbackMessage(
-          `USDC approve confirmed for spender ${spender}. Continuing recipe activation...`
-        );
-      } else {
-        setFeedbackMessage(
-          `USDC approve propagated in allowance state for spender ${spender}. Continuing recipe activation...`
-        );
-      }
     }
   };
 
@@ -937,11 +926,7 @@ export default function Home() {
           connectedAddress,
           parsedDcaConfig.totalDcaBudgetBaseUnits,
           parsedDcaConfig.executionMode,
-          runtimeRequiredSpenders.length > 0
-            ? runtimeRequiredSpenders
-            : runtimeSpender
-              ? [runtimeSpender, CONTRACT_ADDRESSES.sharedExecutorProxy]
-              : [CONTRACT_ADDRESSES.sharedExecutorProxy]
+          CONTRACT_ADDRESSES.sharedExecutorProxy
         );
 
         normalizedDcaPayload = {

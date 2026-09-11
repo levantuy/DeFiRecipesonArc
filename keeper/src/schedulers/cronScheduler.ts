@@ -1511,6 +1511,13 @@ export async function pollAndTriggerActiveRecipes() {
 
         const executionBucket = Math.floor(now.getTime() / (intervalHours * 60 * 60 * 1000));
         const jobId = `execute-${recipe.id}-${executionBucket}`;
+
+        const claimed = await recipesRepository.claimExecutionSlot(recipe.id, now, intervalHours);
+        if (!claimed) {
+          console.log(`[Cron Scheduler] Recipe execution already claimed ${context}`);
+          continue;
+        }
+
         await enqueueRecipeExecutionJobWithRetry(jobId, jobData, context);
 
         if (RUNTIME_CONFIG.keeperUseRedisQueue) {
