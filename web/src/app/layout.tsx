@@ -11,12 +11,12 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const locale = cookies().get('NEXT_LOCALE')?.value === 'vi' ? 'vi' : 'en';
+  const locale = (await cookies()).get('NEXT_LOCALE')?.value === 'vi' ? 'vi' : 'en';
 
   return (
     <html lang={locale} className="dark">

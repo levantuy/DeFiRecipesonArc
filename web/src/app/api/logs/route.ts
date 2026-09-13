@@ -9,12 +9,28 @@ function getKeeperApiBaseUrl() {
 
 export async function GET(request: NextRequest) {
   const userAddress = request.nextUrl.searchParams.get('userAddress');
-  const limit = request.nextUrl.searchParams.get('limit') || '25';
+  const limit = request.nextUrl.searchParams.get('limit') || '10';
+  const offset = request.nextUrl.searchParams.get('offset');
+  const page = request.nextUrl.searchParams.get('page');
+  const status = request.nextUrl.searchParams.get('status');
+  const sort = request.nextUrl.searchParams.get('sort');
 
   const url = new URL(`${getKeeperApiBaseUrl()}/recipes/logs`);
   url.searchParams.set('limit', limit);
+  if (offset) {
+    url.searchParams.set('offset', offset);
+  }
+  if (page) {
+    url.searchParams.set('page', page);
+  }
   if (userAddress) {
     url.searchParams.set('userAddress', userAddress);
+  }
+  if (status) {
+    url.searchParams.set('status', status);
+  }
+  if (sort) {
+    url.searchParams.set('sort', sort);
   }
 
   try {

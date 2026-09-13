@@ -318,6 +318,9 @@ export function createHealthServer(port: number) {
         const payload = await listExecutionLogs({
           userAddress: requestUrl.searchParams.get('userAddress') || undefined,
           limit: requestUrl.searchParams.get('limit') || undefined,
+          offset: requestUrl.searchParams.get('offset') || undefined,
+          page: requestUrl.searchParams.get('page') || undefined,
+          status: requestUrl.searchParams.get('status') || undefined,
         });
         setJsonResponse(res, 200, payload);
       } catch (error: unknown) {

@@ -111,7 +111,9 @@ export const executionLogsRepository = {
 
   async listRecentLogs(input: {
     userAddress?: string;
+    status?: ExecutionStatus | 'ALL';
     limit: number;
+    offset: number;
   }): Promise<ExecutionLogWithRecipeRecord[]> {
     const rows = await query<ExecutionLogWithRecipeRow>({
       name: 'execution-log-list-recent',
@@ -131,12 +133,33 @@ export const executionLogsRepository = {
         FROM "ExecutionLog" e
         INNER JOIN "ActiveRecipe" r ON r.id = e."activeRecipeId"
         WHERE ($1::text IS NULL OR r."userAddress" = $1)
+          AND ($3::text IS NULL OR $3::text = 'ALL' OR e.status = $3::"ExecutionStatus")
         ORDER BY e."simulatedAt" DESC
         LIMIT $2
+        OFFSET $4
       `,
-      values: [input.userAddress ?? null, input.limit],
+      values: [input.userAddress ?? null, input.limit, input.status ?? 'ALL', input.offset],
     });
 
     return rows.map(mapExecutionLogWithRecipeRow);
+  },
+
+  async countLogs(input: {
+    userAddress?: string;
+    status?: ExecutionStatus | 'ALL';
+  }): Promise<number> {
+    const rows = await query<{ total: string }>({
+      name: 'execution-log-count',
+      text: `
+        SELECT COUNT(*)::text AS total
+        FROM "ExecutionLog" e
+        INNER JOIN "ActiveRecipe" r ON r.id = e."activeRecipeId"
+        WHERE ($1::text IS NULL OR r."userAddress" = $1)
+          AND ($2::text IS NULL OR $2::text = 'ALL' OR e.status = $2::"ExecutionStatus")
+      `,
+      values: [input.userAddress ?? null, input.status ?? 'ALL'],
+    });
+
+    return Number(rows[0]?.total ?? 0);
   },
 };

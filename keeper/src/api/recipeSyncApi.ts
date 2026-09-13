@@ -45,6 +45,9 @@ interface UpdateRecipeStatusPayload {
 interface ListExecutionLogsPayload {
   userAddress?: unknown;
   limit?: unknown;
+  offset?: unknown;
+  page?: unknown;
+  status?: unknown;
 }
 
 interface ListRecipesPayload {
@@ -482,24 +485,44 @@ export async function updateRecipeStatus(
 function parseListExecutionLogsPayload(rawQuery: unknown): {
   userAddress?: string;
   limit: number;
+  offset: number;
+  page: number;
+  status?: string;
 } {
   if (!isRecord(rawQuery)) {
-    return { limit: 25 };
+    return { limit: 10, offset: 0, page: 1 };
   }
 
   const query = rawQuery as ListExecutionLogsPayload;
-  const parsedLimit = Number(query.limit ?? 25);
+  const parsedLimit = Number(query.limit ?? 10);
   const limit = Number.isFinite(parsedLimit)
-    ? Math.max(1, Math.min(100, Math.floor(parsedLimit)))
-    : 25;
+    ? Math.max(1, Math.min(50, Math.floor(parsedLimit)))
+    : 10;
+
+  const parsedOffset = Number(query.offset ?? 0);
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, Math.floor(parsedOffset)) : 0;
+
+  const parsedPage = Number(query.page ?? 1);
+  const page = Number.isFinite(parsedPage) ? Math.max(1, Math.floor(parsedPage)) : 1;
 
   const userAddress = query.userAddress !== undefined
     ? normalizeAddress(query.userAddress, 'userAddress')
     : undefined;
 
+  const status = typeof query.status === 'string' && query.status
+    ? query.status.toUpperCase()
+    : undefined;
+
+  const resolvedOffset = offset > 0 || query.offset === undefined
+    ? offset
+    : (page - 1) * limit;
+
   return {
     userAddress,
     limit,
+    offset: resolvedOffset,
+    page,
+    status,
   };
 }
 
@@ -553,9 +576,16 @@ export async function listExecutionLogs(
 ): Promise<Record<string, unknown>> {
   const payload = parseListExecutionLogsPayload(rawQuery);
 
+  const total = await executionLogsRepository.countLogs({
+    userAddress: payload.userAddress,
+    status: payload.status as 'ALL' | undefined,
+  });
+
   const logs = await executionLogsRepository.listRecentLogs({
     userAddress: payload.userAddress,
+    status: payload.status as 'ALL' | undefined,
     limit: payload.limit,
+    offset: payload.offset,
   });
 
   const formattedLogs = await Promise.all(logs.map(async (log) => {
@@ -575,9 +605,16 @@ export async function listExecutionLogs(
     };
   }));
 
+  const page = Math.max(1, Math.floor(payload.offset / payload.limit) + 1);
+  const hasMore = payload.offset + formattedLogs.length < total;
+
   return {
     success: true,
     logs: formattedLogs,
+    total,
+    page,
+    pageSize: payload.limit,
+    hasMore,
   };
 }
 

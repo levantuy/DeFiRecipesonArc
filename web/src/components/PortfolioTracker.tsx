@@ -39,6 +39,17 @@ type StatusFilter = 'ALL' | AuditLog['status'];
 type SortMode = 'NEWEST' | 'OLDEST' | 'STATUS';
 const VALID_STATUS_FILTERS: StatusFilter[] = ['ALL', 'CONFIRMED', 'SUBMITTED', 'REVERTED', 'SIMULATING', 'SIMULATION_FAILED'];
 const VALID_SORT_MODES: SortMode[] = ['NEWEST', 'OLDEST', 'STATUS'];
+const DEFAULT_PAGE_SIZE = 10;
+
+interface LogsPageResponse {
+  success?: boolean;
+  logs?: ApiAuditLogItem[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  error?: string;
+}
 
 const RECIPE_NAME_BY_TYPE: Record<string, string> = {
   AUTO_COMPOUNDER: 'USDC Yield Auto-Compounder',
@@ -134,6 +145,10 @@ const PortfolioTrackerContent: React.FC = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
     const queryStatus = (safeSearchParams.get('status') || 'ALL').toUpperCase() as StatusFilter;
     return VALID_STATUS_FILTERS.includes(queryStatus) ? queryStatus : 'ALL';
@@ -179,28 +194,42 @@ const PortfolioTrackerContent: React.FC = () => {
   }, [router, safePathname, safeSearchParams, sortMode, statusFilter]);
 
   useEffect(() => {
+    setPage(1);
+  }, [statusFilter, sortMode]);
+
+  useEffect(() => {
     let disposed = false;
 
     const fetchLogs = async () => {
       if (!address) {
-        setAuditLogs([]);
-        setLogsError(null);
-        setIsLoadingLogs(false);
+        if (!disposed) {
+          setAuditLogs([]);
+          setLogsError(null);
+          setTotalCount(0);
+          setHasMore(false);
+          setIsLoadingLogs(false);
+        }
         return;
       }
 
       try {
         setIsLoadingLogs(true);
-        const params = new URLSearchParams({ limit: '50' });
-        params.set('userAddress', address.toLowerCase());
+        const params = new URLSearchParams({
+          limit: String(pageSize),
+          offset: String((page - 1) * pageSize),
+          userAddress: address.toLowerCase(),
+          sort: sortMode,
+        });
+
+        if (statusFilter !== 'ALL') {
+          params.set('status', statusFilter);
+        }
 
         const response = await fetch(`/api/logs?${params.toString()}`, {
           method: 'GET',
           cache: 'no-store',
         });
-        const payload = (await response.json().catch(() => null)) as
-          | { success?: boolean; logs?: ApiAuditLogItem[]; error?: string }
-          | null;
+        const payload = (await response.json().catch(() => null)) as LogsPageResponse | null;
 
         if (!response.ok || !payload?.success || !Array.isArray(payload.logs)) {
           throw new Error(payload?.error || `Failed to load logs (${response.status}).`);
@@ -220,14 +249,27 @@ const PortfolioTrackerContent: React.FC = () => {
         }));
 
         if (!disposed) {
+          const nextTotal = Number.isFinite(payload.total) ? Number(payload.total) : mappedLogs.length;
+          const nextPage = Number.isFinite(payload.page) ? Number(payload.page) : page;
+          const nextHasMore = typeof payload.hasMore === 'boolean'
+            ? payload.hasMore
+            : nextPage * pageSize < nextTotal;
+
           setAuditLogs(mappedLogs);
+          setTotalCount(Math.max(0, nextTotal));
+          setHasMore(nextHasMore);
           setLogsError(null);
+          if (nextPage > 1 && nextPage > Math.max(1, Math.ceil(nextTotal / pageSize))) {
+            setPage(Math.max(1, Math.ceil(nextTotal / pageSize)));
+          }
         }
       } catch (error: unknown) {
         if (!disposed) {
           const message = error instanceof Error ? error.message : 'Unknown logs fetch error.';
           setLogsError(message);
           setAuditLogs([]);
+          setTotalCount(0);
+          setHasMore(false);
         }
       } finally {
         if (!disposed) {
@@ -237,13 +279,11 @@ const PortfolioTrackerContent: React.FC = () => {
     };
 
     void fetchLogs();
-    const interval = setInterval(fetchLogs, 15_000);
 
     return () => {
       disposed = true;
-      clearInterval(interval);
     };
-  }, [address]);
+  }, [address, page, pageSize, sortMode, statusFilter]);
 
   const visibleLogs = useMemo(() => {
     const filtered = statusFilter === 'ALL'
@@ -279,6 +319,16 @@ const PortfolioTrackerContent: React.FC = () => {
 
     return sorted;
   }, [auditLogs, sortMode, statusFilter]);
+
+  const totalPages = useMemo(() => {
+    if (totalCount <= 0) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(totalCount / pageSize));
+  }, [pageSize, totalCount]);
+
+  const canGoPrevious = page > 1 && !isLoadingLogs;
+  const canGoNext = page < totalPages && !isLoadingLogs && (hasMore || page * pageSize < totalCount);
 
   const activeRecipeCount = useMemo(() => {
     const activeStatuses: AuditLog['status'][] = ['CONFIRMED', 'SUBMITTED', 'SIMULATING'];
@@ -526,6 +576,30 @@ const PortfolioTrackerContent: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-800 pt-4">
+          <button
+            type="button"
+            onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+            disabled={!canGoPrevious}
+            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:border-slate-500"
+          >
+            Previous
+          </button>
+
+          <div className="text-xs text-slate-400 font-mono">
+            Page {page} / {totalPages}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
+            disabled={!canGoNext}
+            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:border-slate-500"
+          >
+            Next
+          </button>
         </div>
       </div>
     </div>
