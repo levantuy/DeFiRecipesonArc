@@ -1,0 +1,94 @@
+---
+title: Protocol Selection Criteria
+description: How DeFi Recipes on Arc selects protocols for DCA and Yield Auto-Compounder to protect users.
+---
+
+# Protocol Selection Criteria for DCA and Yield Auto-Compounder
+
+## Why this document exists
+
+This document explains why a protocol is accepted into the DeFi Recipes on Arc automation system. Selection is not based on hype or headline APY alone. We use a structured, multi-layer process with clear, measurable criteria.
+
+## Core principles
+
+1. Asset safety is always prioritized over yield.
+2. Every protocol must pass mandatory requirements before scoring.
+3. Only protocols with strong scores are eligible for live automation.
+4. Protocol quality is monitored continuously, not reviewed once and forgotten.
+
+## Current supported use cases
+
+### 1. Recurring DCA (USDC -> EURC)
+
+Priority is execution quality, liquidity depth, and slippage control for recurring swaps.
+
+### 2. Yield Auto-Compounder
+
+Priority is yield durability, reward source safety, and stable execution across claim -> swap -> redeposit.
+
+## Step 1: Mandatory requirements (Hard Gates)
+
+A protocol is rejected immediately if any requirement below is not met:
+
+1. It is included in the on-chain execution whitelist.
+2. It has no unresolved severe incident in the recent review window.
+3. It fully supports static transaction simulation before broadcast.
+4. It provides reliable quote/price data for min output and slippage checks.
+
+## Step 2: Weighted scoring model
+
+After passing Hard Gates, protocols are scored on a 0-100 scale with use-case-specific weights.
+
+| Criteria Group | What it measures | DCA | Yield |
+| :--- | :--- | ---: | ---: |
+| Security Maturity | Audit coverage, incident history, response quality | 30% | 35% |
+| Liquidity Depth | Market depth at common order sizes | 25% | 15% |
+| Execution Quality | Fill success rate, execution drift, revert frequency | 20% | 15% |
+| Yield Sustainability | APR/APY stability and reward quality | 5% | 20% |
+| Integration Reliability | RPC/event stability, ABI consistency, observability | 10% | 10% |
+| Cost Efficiency | Total swap/lending/gas cost per cycle | 10% | 5% |
+
+Composite score:
+
+ProtocolScore = sum(w_i x s_i), with i running from 1 to n.
+
+Where:
+
+- `w_i` is the criteria weight.
+- `s_i` is the normalized criteria score in the range [0, 100].
+
+## Step 3: Promotion thresholds for live use
+
+1. Only protocols with total score >= 75 can enter live candidate sets.
+2. Any protocol with Security Maturity < 70 is rejected, even with high total score.
+3. For DCA, routes with repeated slippage breaches are downgraded or disabled.
+4. For Yield, sustained low yield below operating threshold triggers pause or reconfiguration guidance.
+
+## Step 4: Ongoing monitoring after selection
+
+Control does not stop at onboarding.
+
+1. DCA routes are reviewed weekly.
+2. Yield venues are reviewed every two weeks.
+3. Hard-Gate violations trigger automatic disablement and user-facing alerts.
+4. Score snapshots are stored in audit logs for decision traceability.
+
+## How users are protected
+
+1. Execution authority is scope-limited and cannot withdraw funds arbitrarily.
+2. Transactions are simulated before broadcast to reduce failure risk.
+3. Slippage checks are enforced before and during execution.
+4. Users can revoke delegation or pause recipes whenever needed.
+
+## How you can verify transparency yourself
+
+You can validate the system using:
+
+1. Recipe status and execution history in the dashboard.
+2. Transaction hashes on Arc Explorer.
+3. Skip/pause alerts when safety conditions are not met.
+4. Recipe limits and configuration before activation.
+
+## Project commitment
+
+DeFi Recipes on Arc only enables automation on protocols that satisfy all three requirements simultaneously: safety, execution reliability, and user-verifiable transparency.

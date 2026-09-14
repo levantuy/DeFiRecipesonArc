@@ -264,7 +264,47 @@ sequenceDiagram
 
 ---
 
-#### F-3.3: Scope Lock for MVP
+#### F-3.3: Protocol Selection Framework for DCA & Yield Auto-Compounder
+
+* **Mục tiêu:** Chuẩn hóa tiêu chí lựa chọn protocol để đảm bảo 2 recipe MVP vận hành an toàn, thanh khoản đủ sâu và có chất lượng thực thi ổn định theo thời gian.
+* **Phạm vi áp dụng:**
+  * **DCA (USDC -> EURC):** Áp dụng cho nguồn route swap và các pool thanh khoản được App Kit đề xuất.
+  * **Yield Auto-Compounder:** Áp dụng cho lending protocol nhận gửi USDC, nguồn reward và route swap reward -> USDC.
+* **Nguyên tắc bắt buộc (Hard Gates - Fail là loại):**
+  * Protocol/pool phải nằm trong whitelist on-chain của `SharedExecutorProxy`.
+  * Không có incident nghiêm trọng chưa được khắc phục trong 90 ngày gần nhất (exploit, pause kéo dài, mất peg liên quan pool chiến lược).
+  * Hỗ trợ đầy đủ luồng mô phỏng tĩnh `eth_call` cho các hàm được recipe sử dụng.
+  * Có dữ liệu quote/price đủ để kiểm tra `minAmountOut` và slippage trước khi phát lệnh.
+* **Bộ tiêu chí chấm điểm có trọng số (Weighted Scorecard):**
+
+| Nhóm tiêu chí | Mô tả đánh giá | Trọng số DCA | Trọng số Yield |
+| :--- | :--- | ---: | ---: |
+| Security Maturity | Audit, bug bounty, lịch sử sự cố, mức độ phản ứng sự cố | 30% | 35% |
+| Liquidity Depth | Độ sâu thanh khoản tại size chuẩn (`5/50/500 USDC`) và giờ cao điểm | 25% | 15% |
+| Execution Quality | Tỷ lệ fill thành công, độ lệch giá thực thi, tần suất revert | 20% | 15% |
+| Yield Sustainability | Độ ổn định APR/APY, nguồn yield, biến động reward token | 5% | 20% |
+| Integration Reliability | Độ ổn định RPC/event, tính nhất quán ABI, khả năng monitor | 10% | 10% |
+| Cost Efficiency | Tổng phí swap/lending + gas USDC trên Arc cho mỗi chu kỳ | 10% | 5% |
+
+Điểm tổng hợp:
+
+$$
+	ext{ProtocolScore} = \sum_{i=1}^{n} w_i \times s_i
+$$
+
+Trong đó $w_i$ là trọng số theo use case (DCA hoặc Yield), $s_i \in [0,100]$ là điểm chuẩn hóa của từng tiêu chí.
+
+* **Ngưỡng ra quyết định:**
+  * Chỉ đưa vào danh sách candidate khi `ProtocolScore >= 75`.
+  * Nếu điểm Security Maturity < 70 thì loại, kể cả điểm tổng cao.
+  * Với DCA, nếu median slippage ở cấu hình `50 USDC` vượt `maxSlippageBps` trong hơn 5% mẫu đo/tuần thì tự động hạ bậc route.
+  * Với Yield, nếu APR giảm dưới ngưỡng vận hành tối thiểu (ví dụ `< 2%`) trong 14 ngày liên tiếp thì keeper chuyển recipe về trạng thái `PAUSED_LOW_YIELD` hoặc gợi ý tái cấu hình.
+* **Cơ chế đánh giá định kỳ (Protocol Review Cycle):**
+  * Chạy review hàng tuần cho DCA routes và 2 tuần/lần cho Yield venues.
+  * Khi phát hiện vi phạm hard gate, thực hiện `auto-disable` trên route/protocol và phát cảnh báo dashboard trong vòng < 60 giây.
+  * Lưu snapshot score vào Audit Log để truy vết quyết định chọn/bỏ protocol.
+
+#### F-3.4: Scope Lock for MVP
 
 * MVP hiện tại chỉ hỗ trợ 2 luồng chính thức: **USDC Yield Auto-Compounder** và **USDC -> EURC Recurring DCA**.
 * Mọi recipe ngoài 2 luồng trên được xem là **out of scope** trong tài liệu, API, scheduler và giao diện sản phẩm hiện tại.

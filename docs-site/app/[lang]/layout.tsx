@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { AppProviders } from '@/components/app-providers';
 import { i18n } from '@/lib/i18n';
-import { source } from '@/lib/source';
 
 const titles: Record<string, string> = {
   en: 'DeFi Recipes on Arc — Documentation',
@@ -45,17 +44,10 @@ export default async function RootLayout({
   const { lang } = await params;
   if (!(i18n.languages as string[]).includes(lang)) notFound();
 
-  const slugsByLocale = Object.fromEntries(
-    i18n.languages.map((locale) => [
-      locale,
-      source.getPages(locale).map((page) => page.slugs.join('/')),
-    ]),
-  );
-
   return (
     <html lang={lang} suppressHydrationWarning>
       <body className="flex min-h-screen flex-col">
-        <AppProviders lang={lang} slugsByLocale={slugsByLocale}>
+        <AppProviders lang={lang}>
           {children}
         </AppProviders>
       </body>

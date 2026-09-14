@@ -1,0 +1,94 @@
+---
+title: Tiêu chí chọn Protocol
+description: Cách DeFi Recipes on Arc chọn protocol cho DCA và Yield Auto-Compounder để bảo vệ người dùng.
+---
+
+# Tiêu chí chọn Protocol cho DCA và Yield Auto-Compounder
+
+## Mục tiêu của tài liệu này
+
+Tài liệu này giúp bạn hiểu rõ vì sao một protocol được đưa vào hệ thống tự động hóa của DeFi Recipes on Arc. Chúng tôi không chọn theo cảm tính hoặc chỉ dựa vào APY cao, mà áp dụng quy trình kiểm tra nhiều lớp với tiêu chí định lượng rõ ràng.
+
+## Nguyên tắc cốt lõi
+
+1. An toàn tài sản luôn ưu tiên cao hơn lợi suất.
+2. Mọi protocol phải vượt qua điều kiện bắt buộc trước khi được chấm điểm.
+3. Chỉ protocol có điểm đủ cao mới được đưa vào luồng chạy thực tế.
+4. Kết quả đánh giá được theo dõi định kỳ, không phải đánh giá một lần rồi bỏ ngỏ.
+
+## Hai trường hợp sử dụng đang áp dụng
+
+### 1. Recurring DCA (USDC -> EURC)
+
+Trọng tâm là chất lượng khớp lệnh, độ sâu thanh khoản và kiểm soát trượt giá khi swap định kỳ.
+
+### 2. Yield Auto-Compounder
+
+Trọng tâm là độ bền lợi suất, mức độ an toàn của nguồn reward và tính ổn định khi claim -> swap -> tái nạp.
+
+## Bước 1: Điều kiện bắt buộc (Hard Gates)
+
+Protocol sẽ bị loại ngay nếu không đạt một trong các điều kiện sau:
+
+1. Có trong whitelist thực thi on-chain của hệ thống.
+2. Không có sự cố nghiêm trọng chưa được khắc phục trong giai đoạn gần đây.
+3. Hỗ trợ đầy đủ mô phỏng giao dịch tĩnh trước khi phát lệnh.
+4. Có dữ liệu quote/price đủ tin cậy để kiểm tra đầu ra tối thiểu và slippage.
+
+## Bước 2: Chấm điểm theo trọng số
+
+Sau khi qua Hard Gates, protocol được chấm điểm theo thang 100 với trọng số theo từng use case.
+
+| Nhóm tiêu chí | Ý nghĩa | DCA | Yield |
+| :--- | :--- | ---: | ---: |
+| Security Maturity | Mức độ an toàn, audit, lịch sử sự cố, tốc độ phản ứng | 30% | 35% |
+| Liquidity Depth | Độ sâu thanh khoản ở các mức lệnh phổ biến | 25% | 15% |
+| Execution Quality | Tỷ lệ chạy thành công, độ lệch giá, tần suất revert | 20% | 15% |
+| Yield Sustainability | Độ ổn định của APR/APY và nguồn lợi suất | 5% | 20% |
+| Integration Reliability | Độ ổn định tích hợp, event, ABI, RPC | 10% | 10% |
+| Cost Efficiency | Tổng phí thực thi (swap/lending/gas) | 10% | 5% |
+
+Điểm tổng hợp:
+
+ProtocolScore = tổng(w_i x s_i), với i chạy từ 1 đến n.
+
+Trong đó:
+
+- `w_i` là trọng số của tiêu chí.
+- `s_i` là điểm chuẩn hóa từ 0 đến 100.
+
+## Bước 3: Ngưỡng đưa vào vận hành
+
+1. Chỉ protocol có tổng điểm từ 75 trở lên mới được đưa vào danh sách ứng viên chạy thật.
+2. Nếu điểm Security Maturity dưới 70, protocol bị loại dù tổng điểm cao.
+3. Với DCA, route có tỷ lệ trượt giá vượt ngưỡng cấu hình trong nhiều mẫu đo sẽ bị hạ ưu tiên hoặc tắt.
+4. Với Yield, khi lợi suất giảm kéo dài dưới ngưỡng vận hành, hệ thống sẽ tạm dừng recipe hoặc đề xuất cấu hình lại.
+
+## Bước 4: Giám sát liên tục sau khi đã chọn
+
+Việc kiểm soát không dừng ở lúc chọn protocol.
+
+1. DCA route được rà soát định kỳ hàng tuần.
+2. Yield venue được rà soát định kỳ 2 tuần/lần.
+3. Khi vi phạm điều kiện bắt buộc, protocol/route bị vô hiệu hóa tự động và phát cảnh báo.
+4. Kết quả đánh giá được lưu vào audit log để truy vết quyết định.
+
+## Người dùng được bảo vệ như thế nào
+
+1. Quyền của hệ thống thực thi bị giới hạn theo phạm vi ủy quyền, không thể rút tiền tùy ý.
+2. Mọi giao dịch đều qua mô phỏng trước, giảm rủi ro gọi lệnh lỗi.
+3. Slippage được kiểm tra trước và trong quá trình thực thi.
+4. Người dùng có thể thu hồi ủy quyền hoặc dừng recipe khi cần.
+
+## Cách bạn tự kiểm chứng tính minh bạch
+
+Bạn có thể tự đối chiếu các điểm sau:
+
+1. Trạng thái recipe và lịch sử chạy trong dashboard.
+2. Hash giao dịch trên Arc Explorer.
+3. Các thông báo skip/pause do thiếu điều kiện an toàn.
+4. Cấu hình giới hạn của recipe trước khi kích hoạt.
+
+## Cam kết của dự án
+
+DeFi Recipes on Arc cam kết chỉ kích hoạt tự động hóa trên các protocol đáp ứng đồng thời ba điều kiện: an toàn, khả năng thực thi ổn định và minh bạch kiểm chứng được.
