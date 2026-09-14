@@ -70,3 +70,5 @@ Thumbs.db
 # Gemini & Agent Artifacts
 .gemini/
 keeper/node_modules/*
+
+.vercel

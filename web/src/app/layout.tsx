@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import './globals.css';
 import { Providers } from './providers';
+import { Analytics } from "@vercel/analytics/next"
 
 export const metadata: Metadata = {
   title: 'DeFi Recipes on Arc - Automated Non-Custodial Yield Workflows',
@@ -22,6 +23,7 @@ export default async function RootLayout({
     <html lang={locale} className="dark">
       <body className="antialiased bg-background text-foreground min-h-screen">
         <Providers initialLang={locale}>{children}</Providers>
+        <Analytics />
       </body>
     </html>
   );
