@@ -63,6 +63,7 @@ Trước khi người dùng xác nhận Kích hoạt Recipe (ví dụ: Auto-Comp
 ```
 
 ### Các Quy tắc UX trong Simulation Modal:
+- Với Recurring DCA: mode thực thi được cố định là `PULL_PER_RUN`; không hiển thị bước chọn mode trong UI/use case.
 - Nếu Giả lập (`eth_call`) thất bại: Khóa nút "Confirm", hiển thị hộp cảnh báo màu đỏ (`risk-red`) kèm nguyên nhân cụ thể (ví dụ: `Slippage exceeded` hoặc `Liquidity pool low`).
 - Nút điều chỉnh Slippage: Cho phép chọn nhanh 0.1%, 0.5% (mặc định), 1.0% hoặc nhập tùy chỉnh.
 

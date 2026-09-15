@@ -65,7 +65,7 @@ const DEFAULT_INTERVAL_HOURS: Record<string, number> = {
   AUTO_COMPOUNDER: 168,
 };
 
-type DcaExecutionMode = 'PREFUND' | 'PULL';
+type DcaExecutionMode = 'PULL';
 
 function getKeeperApiBaseUrl() {
   const configured = process.env.KEEPER_API_BASE_URL;
@@ -137,9 +137,9 @@ function normalizeDcaUsdcAmount(rawValue: unknown, fieldName: string): string {
 }
 
 function normalizeDcaExecutionMode(rawValue: unknown): DcaExecutionMode {
-  if (rawValue === 'PREFUND') {
+  if (rawValue !== undefined && rawValue !== 'PULL') {
     throw new Error(
-      'DCA mode PREFUND is not supported by the current keeper execution path. Use mode PULL.'
+      'Only DCA execution mode PULL_PER_RUN is supported by the current keeper execution path.'
     );
   }
   return 'PULL';

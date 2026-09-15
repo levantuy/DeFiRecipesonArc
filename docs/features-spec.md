@@ -255,6 +255,7 @@ sequenceDiagram
   5. Chuyển thẳng số EURC thu được về ví cá nhân của người dùng.
 * **Tham số Đầu vào (Input Parameters):**
   * `dcaAmountUsdc`: Số tiền USDC cho mỗi lần mua (giá trị nghiệp vụ: `5 USDC`; giá trị on-chain tương ứng: `5,000,000` raw/base units). Nếu cấu hình `$50`, giá trị on-chain là `50,000,000` raw/base units.
+  * `executionMode`: Cố định `PULL_PER_RUN` (không còn bước lựa chọn mode trong use case MVP hiện tại).
   * `targetAssetSymbol`: Ký hiệu token đích trên Arc Testnet (`EURC` mặc định, chỉ chấp nhận `USDC` / `EURC` / `cirBTC` ở tầng validate cấu hình).
   * `frequency`: Chu kỳ mua (`WEEKLY` / `MONTHLY`).
   * `maxSlippageBps`: Trượt giá cho phép (`50` = 0.5%).

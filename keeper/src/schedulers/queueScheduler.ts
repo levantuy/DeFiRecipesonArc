@@ -146,7 +146,7 @@ export interface RecipeExecutionJobData {
   queueEnqueuedAtMs?: number;
   preflightSimulationPassed?: boolean;
   preflightEstimatedGasUsdc?: string;
-  dcaMode?: 'PREFUND' | 'PULL';
+  dcaMode?: 'PULL';
   dcaExecutionAmountBaseUnits?: string;
 }
 
@@ -158,7 +158,7 @@ export interface TxConfirmationJobData {
   queueEnqueuedAtMs?: number;
   txSubmittedAtMs: number;
   preflightEstimatedGasUsdc?: string;
-  dcaMode?: 'PREFUND' | 'PULL';
+  dcaMode?: 'PULL';
   dcaExecutionAmountBaseUnits?: string;
 }
 

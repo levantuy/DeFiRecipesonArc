@@ -265,7 +265,7 @@ function parseRegisterPayload(rawBody: unknown): {
     const normalizedDcaState = parseDcaConfigStateStrict(dcaParameters);
     if (normalizedDcaState.mode !== 'PULL') {
       throw new Error(
-        'RECURRING_DCA currently supports mode=PULL only. PREFUND execution path is not available yet.'
+        'RECURRING_DCA currently supports execution mode PULL_PER_RUN only.'
       );
     }
     dcaParameters = {

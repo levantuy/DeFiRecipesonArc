@@ -1,6 +1,6 @@
 import { JsonObject } from '../db/types';
 
-export type DcaExecutionMode = 'PREFUND' | 'PULL';
+export type DcaExecutionMode = 'PULL';
 export type DcaLifecycleStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED';
 
 const USDC_BASE = 1_000_000n;
@@ -66,9 +66,7 @@ function parsePositiveUsdcToBaseUnits(value: unknown, fieldName: string): { amou
 }
 
 function normalizeExecutionMode(value: unknown): DcaExecutionMode {
-  if (value === 'PREFUND') {
-    return 'PREFUND';
-  }
+  void value;
   return 'PULL';
 }
 

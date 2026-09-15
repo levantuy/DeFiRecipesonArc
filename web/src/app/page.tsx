@@ -760,7 +760,7 @@ export default function Home() {
   const ensureDcaUsdcAllowance = async (
     connectedAddress: `0x${string}`,
     requiredAllowanceBaseUnits: bigint,
-    executionMode: DcaExecutionMode,
+    _executionMode: DcaExecutionMode,
     spender: `0x${string}`
   ): Promise<void> => {
     if (!publicClient) {
@@ -779,7 +779,7 @@ export default function Home() {
     }
 
     setFeedbackMessage(
-      `USDC allowance is below required DCA ${executionMode === 'PREFUND' ? 'prefund' : 'pull'} budget. ` +
+      'USDC allowance is below required DCA pull-per-run budget. ' +
       `Approving spender ${spender} for ${requiredAllowanceBaseUnits.toString()} base units...`
     );
 
@@ -888,13 +888,6 @@ export default function Home() {
         );
         if (runs <= 0n) {
           throw new Error('Estimated runs must be at least 1 for DCA activation.');
-        }
-
-        if (parsedDcaConfig.executionMode !== 'PULL') {
-          throw new Error(
-            'DCA PREFUND mode is not supported by the current on-chain execution path yet. ' +
-            'Please switch to PULL mode and retry activation.'
-          );
         }
 
         let runtimeSpender: `0x${string}` | null =
@@ -1010,7 +1003,7 @@ export default function Home() {
       const dcaMessage =
         selectedRecipeSnapshot.recipeType === 'RECURRING_DCA' && normalizedDcaPayload
           ? `DCA configured with total budget ${normalizedDcaPayload.totalDcaBudgetUsdc} USDC, ` +
-            `${normalizedDcaPayload.perExecutionUsdc} USDC per run, mode ${normalizedDcaPayload.executionMode === 'PREFUND' ? 'PREFUND' : 'PULL_PER_RUN'}. `
+            `${normalizedDcaPayload.perExecutionUsdc} USDC per run, mode PULL_PER_RUN. `
           : '';
 
       setFeedbackMessage(

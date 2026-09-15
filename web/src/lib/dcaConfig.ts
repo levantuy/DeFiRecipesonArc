@@ -1,6 +1,6 @@
 import { formatUnits, parseUnits } from 'viem';
 
-export type DcaExecutionMode = 'PREFUND' | 'PULL';
+export type DcaExecutionMode = 'PULL';
 
 export interface DcaActivationConfig {
   totalDcaBudgetUsdc: string;
@@ -72,8 +72,8 @@ export function formatUsdcDecimal(
 }
 
 export function normalizeDcaExecutionMode(value: unknown): DcaExecutionMode {
-  if (value === 'PREFUND') {
-    return 'PREFUND';
+  if (value !== undefined && value !== 'PULL') {
+    throw new Error('Only execution mode PULL_PER_RUN is supported.');
   }
   return 'PULL';
 }
