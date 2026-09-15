@@ -1,6 +1,6 @@
 1
 00:00:00,000 --> 00:00:03,610
-(Được chép bởi TurboScribe. Nâng cấp lên Không giới hạn để gỡ bỏ thông báo này.) Welcome to ARC Office Hours. Let's dive right into this explainer.
+Welcome to ARC Office Hours. Let's dive right into this explainer.
 
 2
 00:00:04,130 --> 00:00:08,750
