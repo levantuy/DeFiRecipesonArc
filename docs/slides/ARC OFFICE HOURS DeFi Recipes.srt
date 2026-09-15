@@ -1,0 +1,455 @@
+1
+00:00:00,000 --> 00:00:03,610
+(Được chép bởi TurboScribe. Nâng cấp lên Không giới hạn để gỡ bỏ thông báo này.) Welcome to ARC Office Hours. Let's dive right into this explainer.
+
+2
+00:00:04,130 --> 00:00:08,750
+Today, we're talking about DeFi Recipes – Safer DeFi Automation on ARC.
+
+3
+00:00:09,050 --> 00:00:13,090
+As we go through this, we're going to keep it laser-focused on three core pillars.
+
+4
+00:00:13,650 --> 00:00:15,850
+First, taking a security-first approach.
+
+5
+00:00:16,310 --> 00:00:18,610
+Second, enabling automated strategies.
+
+6
+00:00:19,170 --> 00:00:23,070
+And third, unpacking exactly why all of this is built on ARC.
+
+7
+00:00:23,710 --> 00:00:26,090
+Automate DeFi. Keep Control.
+
+8
+00:00:26,650 --> 00:00:28,310
+Section 01. The Problem.
+
+9
+00:00:28,730 --> 00:00:31,270
+DeFi is powerful, but automation is risky.
+
+10
+00:00:32,030 --> 00:00:33,830
+Listen, the more we automate things,
+
+11
+00:00:33,930 --> 00:00:37,210
+the more absolutely crucial those underlying guardrails become.
+
+12
+00:00:37,530 --> 00:00:40,610
+There are four major bottlenecks we're facing right now.
+
+13
+00:00:40,910 --> 00:00:43,330
+First, there are just way too many manual steps.
+
+14
+00:00:43,630 --> 00:00:45,650
+You're forced to string together multiple transactions
+
+15
+00:00:45,650 --> 00:00:48,590
+across completely different protocols just to pull off one strategy.
+
+16
+00:00:48,970 --> 00:00:50,850
+Second, smart contract risk.
+
+17
+00:00:51,150 --> 00:00:53,790
+Automation without strict guardrails can take a tiny mistake
+
+18
+00:00:53,790 --> 00:00:57,030
+or an unexpected contract behavior and literally magnify it.
+
+19
+00:00:57,330 --> 00:00:59,070
+Third, setting the wrong parameters.
+
+20
+00:00:59,510 --> 00:01:02,210
+Misconfiguring a protocol, a specific token, a function,
+
+21
+00:01:02,330 --> 00:01:05,570
+or allowable slippage amounts can be an absolute disaster for your wallet.
+
+22
+00:01:05,950 --> 00:01:07,850
+And fourth, it's just hard for normal users.
+
+23
+00:01:08,230 --> 00:01:12,330
+These powerful workflows are simply still too hard for regular folks to operate safely.
+
+24
+00:01:12,530 --> 00:01:15,370
+Which brings us to Section 02. The Solution.
+
+25
+00:01:15,750 --> 00:01:16,730
+DeFi Recipes.
+
+26
+00:01:17,310 --> 00:01:18,450
+Create a strategy once.
+
+27
+00:01:18,890 --> 00:01:19,890
+Configure its boundaries.
+
+28
+00:01:20,450 --> 00:01:21,510
+Automate with control.
+
+29
+00:01:22,070 --> 00:01:24,030
+Here's how that actual flow works.
+
+30
+00:01:24,570 --> 00:01:29,130
+First, you create, actively choosing a strategy that fits your financial goals.
+
+31
+00:01:29,490 --> 00:01:35,130
+Then, you configure it, setting strict parameters to define exactly what it can and can't do.
+
+32
+00:01:35,610 --> 00:01:40,510
+Next, you automate, letting the system execute those steps for you automatically.
+
+33
+00:01:41,030 --> 00:01:44,850
+And finally, you monitor, keeping clear track of what happens
+
+34
+00:01:44,850 --> 00:01:48,190
+so you know everything is running smoothly within your set boundaries.
+
+35
+00:01:49,090 --> 00:01:51,630
+Automation should not have unlimited permissions.
+
+36
+00:01:51,970 --> 00:01:55,390
+Because we firmly believe that we don't want unlimited permissions,
+
+37
+00:01:55,890 --> 00:01:57,110
+the golden rule is this.
+
+38
+00:01:57,730 --> 00:02:00,730
+Every single recipe has clear, controlled boundaries.
+
+39
+00:02:01,110 --> 00:02:03,810
+It only does exactly what you've permitted it to do.
+
+40
+00:02:04,370 --> 00:02:06,930
+Moving into Section 03. Security.
+
+41
+00:02:07,410 --> 00:02:08,410
+Security first.
+
+42
+00:02:08,870 --> 00:02:12,350
+We evaluate whether a protocol is safe enough to automate in the first place,
+
+43
+00:02:12,630 --> 00:02:15,270
+rather than just optimizing for APY alone.
+
+44
+00:02:15,810 --> 00:02:19,250
+To figure that out objectively, we use a protocol score.
+
+45
+00:02:19,630 --> 00:02:22,530
+This gives us a structured signal to determine whether a protocol
+
+46
+00:02:22,530 --> 00:02:24,250
+should even be eligible for automation.
+
+47
+00:02:24,790 --> 00:02:26,030
+We look at four specific things.
+
+48
+00:02:26,410 --> 00:02:27,710
+First up, security maturity.
+
+49
+00:02:28,070 --> 00:02:29,570
+How battle-tested is the protocol?
+
+50
+00:02:29,950 --> 00:02:31,170
+Second, audit coverage.
+
+51
+00:02:31,350 --> 00:02:33,870
+How extensive and rigorous have their security reviews been?
+
+52
+00:02:34,290 --> 00:02:37,210
+Third, we look at their incident history, to see if they've had breaches.
+
+53
+00:02:37,590 --> 00:02:38,830
+And fourth, response quality.
+
+54
+00:02:38,950 --> 00:02:41,970
+If something did go wrong, how well did the team actually handle it?
+
+55
+00:02:42,530 --> 00:02:46,410
+So at the end of the day, guardrails are greater than unlimited access.
+
+56
+00:02:47,110 --> 00:02:49,490
+Let's jump to Section 04. Live Demo.
+
+57
+00:02:49,690 --> 00:02:50,990
+From recipe to execution.
+
+58
+00:02:51,470 --> 00:02:54,910
+We're going to keep our focus entirely on the actual user journey here,
+
+59
+00:02:55,130 --> 00:02:56,850
+rather than every little UI detail.
+
+60
+00:02:57,370 --> 00:02:59,170
+The journey takes five easy steps.
+
+61
+00:02:59,490 --> 00:03:00,970
+Step 1. You choose a recipe,
+
+62
+00:03:01,410 --> 00:03:04,770
+linking your overarching strategy with specific, allowed actions.
+
+63
+00:03:05,250 --> 00:03:07,650
+Step 2. You configure the exact parameters,
+
+64
+00:03:08,050 --> 00:03:10,790
+dialing in the amounts, frequency, and your slippage tolerance.
+
+65
+00:03:10,790 --> 00:03:12,970
+Step 3. Is the security layer,
+
+66
+00:03:13,230 --> 00:03:15,930
+where the system runs protocol and specific function checks.
+
+67
+00:03:16,310 --> 00:03:17,770
+Step 4. Execute.
+
+68
+00:03:18,070 --> 00:03:21,610
+The automation runs, but only after passing those strict safety checks.
+
+69
+00:03:22,050 --> 00:03:23,210
+And Step 5. Monitor.
+
+70
+00:03:23,530 --> 00:03:26,270
+You can just sit back and watch the execution and the outcomes.
+
+71
+00:03:26,870 --> 00:03:27,530
+Live website?
+
+72
+00:03:28,150 --> 00:03:29,310
+DeFiRecipes.com.
+
+73
+00:03:29,430 --> 00:03:31,050
+Show the real UI here.
+
+74
+00:03:31,270 --> 00:03:32,190
+Then stop clicking.
+
+75
+00:03:32,570 --> 00:03:34,710
+Section 05. Why ARC?
+
+76
+00:03:35,130 --> 00:03:36,430
+Why build this on ARC?
+
+77
+00:03:37,150 --> 00:03:41,170
+We see an incredibly strong fit between ARC's stablecoin-native environment
+
+78
+00:03:41,170 --> 00:03:42,490
+and automated workflows.
+
+79
+00:03:43,130 --> 00:03:46,510
+There are four main reasons this synergy works so perfectly.
+
+80
+00:03:46,930 --> 00:03:48,590
+First, it's stablecoin-native.
+
+81
+00:03:48,950 --> 00:03:51,950
+ARC was purposefully designed from the ground up for financial applications.
+
+82
+00:03:52,490 --> 00:03:55,570
+Second, fast transactions, which creates a vastly better,
+
+83
+00:03:55,710 --> 00:03:57,730
+more reliable experience for automated workflows.
+
+84
+00:03:58,330 --> 00:04:01,150
+Third, low-cost execution is absolutely critical.
+
+85
+00:04:01,450 --> 00:04:05,050
+When you're running frequent automated actions, gas fees will eat your yields,
+
+86
+00:04:05,050 --> 00:04:07,430
+making ARC's efficiency super practical.
+
+87
+00:04:07,910 --> 00:04:09,390
+All of this rolls into the fourth point.
+
+88
+00:04:09,610 --> 00:04:14,050
+A perfect automation fit, serving as an ideal foundation for programmable finance.
+
+89
+00:04:14,710 --> 00:04:18,089
+That foundation allows for automated yield strategies, recurring payments,
+
+90
+00:04:18,390 --> 00:04:21,730
+portfolio rebalancing, and highly complex stablecoin workflows.
+
+91
+00:04:22,490 --> 00:04:24,270
+Section 06.  Roadmap.
+
+92
+00:04:24,570 --> 00:04:25,130
+What's next?
+
+93
+00:04:25,510 --> 00:04:29,490
+We are still early in this journey, focusing entirely on expanding coverage
+
+94
+00:04:29,490 --> 00:04:31,550
+without ever compromising on safety.
+
+95
+00:04:32,170 --> 00:04:34,270
+So, what does that expansion look like?
+
+96
+00:04:34,270 --> 00:04:36,870
+We're focusing on more DeFi recipes,
+
+97
+00:04:37,130 --> 00:04:40,930
+bringing deeper protocol integrations and new strategies to the platform.
+
+98
+00:04:41,390 --> 00:04:45,410
+We're building better security scoring, pushing for stronger valuation models.
+
+99
+00:04:45,750 --> 00:04:47,930
+We're unlocking more automation capabilities
+
+100
+00:04:47,930 --> 00:04:51,130
+for a wider variety of programmable financial workflows.
+
+101
+00:04:51,730 --> 00:04:53,850
+And finally, more ARC integrations,
+
+102
+00:04:54,290 --> 00:04:58,430
+tapping into deeper, more robust use cases across the whole ecosystem.
+
+103
+00:04:59,030 --> 00:04:59,450
+Vision.
+
+104
+00:04:59,890 --> 00:05:03,310
+A place where users can discover and safely automate DeFi strategies.
+
+105
+00:05:04,270 --> 00:05:04,650
+Simple.
+
+106
+00:05:05,110 --> 00:05:05,730
+Automated.
+
+107
+00:05:06,210 --> 00:05:06,630
+Safe.
+
+108
+00:05:07,330 --> 00:05:10,770
+So, if you could automate your most complex DeFi strategy tomorrow
+
+109
+00:05:10,770 --> 00:05:13,290
+with complete peace of mind, what would you build?
+
+110
+00:05:13,890 --> 00:05:15,090
+DeFi Recipes.
+
+111
+00:05:15,390 --> 00:05:16,290
+Built on ARC.
+
+112
+00:05:16,710 --> 00:05:17,310
+Thank you.
+
+113
+00:05:17,570 --> 00:05:18,990
+Feedback and questions welcome.
+
+114
+00:05:19,790 --> 00:05:21,050
+DeFiRecipes.com
