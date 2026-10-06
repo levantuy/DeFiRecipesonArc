@@ -243,11 +243,7 @@ function parseRegisterPayload(rawBody: unknown): {
 
   if (recipeType === RecipeType.RECURRING_DCA) {
     if (targetProtocol) {
-      throw new Error('RECURRING_DCA does not accept targetProtocol. Route resolution is managed by ARC_LIFI_SWAP.');
-    }
-
-    if (swapProvider !== null && swapProvider !== 'ARC_LIFI_SWAP' && swapProvider !== 'ARC_APP_KIT_SWAP') {
-      throw new Error('RECURRING_DCA requires swapProvider=ARC_LIFI_SWAP (or ARC_APP_KIT_SWAP for legacy fallback).');
+      throw new Error('RECURRING_DCA does not accept targetProtocol. Route resolution is managed by swapProvider.');
     }
 
     let dcaParameters = { ...(parametersJson as Record<string, unknown>) };
@@ -279,6 +275,7 @@ function parseRegisterPayload(rawBody: unknown): {
       userAddress,
       recipeType,
       targetProtocol: null,
+      // Preserve historical default when caller does not specify a swap provider.
       swapProvider: swapProvider ?? 'ARC_LIFI_SWAP',
       parametersJson,
     };

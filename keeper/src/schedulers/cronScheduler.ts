@@ -1,4 +1,4 @@
-import { JsonObject, RecipeStatus, RecipeType } from '../db/types';
+import { JsonObject, RecipeStatus, RecipeType, SwapProvider } from '../db/types';
 import { createPublicClient, http } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import {
@@ -88,6 +88,13 @@ const claimableRewardsCache = new Map<string, { amount: bigint; checkedAtMs: num
 const USDC_ALLOWANCE_CACHE_TTL_MS = 30 * 1000;
 const usdcAllowanceCache = new Map<string, { amount: bigint; checkedAtMs: number }>();
 const dcaSwapRouteClient = createDcaSwapRouteClientFromRuntime();
+const DCA_SUPPORTED_RECIPE_SWAP_PROVIDERS = new Set<SwapProvider>([
+  SwapProvider.ARC_LIFI_SWAP,
+  SwapProvider.ARC_APP_KIT_SWAP,
+  SwapProvider.LIFI_DIRECT,
+  SwapProvider.CURVE_DIRECT,
+  SwapProvider.CIRCLE_DIRECT,
+]);
 const QUEUE_ENQUEUE_RETRY_ATTEMPTS = 2;
 const QUEUE_ENQUEUE_RETRY_DELAY_MS = 750;
 
@@ -1063,8 +1070,7 @@ export async function pollAndTriggerActiveRecipes() {
 
           if (
             recipe.swapProvider &&
-            recipe.swapProvider !== 'ARC_LIFI_SWAP' &&
-            recipe.swapProvider !== 'ARC_APP_KIT_SWAP'
+            !DCA_SUPPORTED_RECIPE_SWAP_PROVIDERS.has(recipe.swapProvider)
           ) {
             console.warn(
               `[Cron Scheduler Warning] Unsupported swapProvider=${recipe.swapProvider} ${context}. ` +

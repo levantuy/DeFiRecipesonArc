@@ -92,6 +92,26 @@ describe('recipeSyncApi register validation', () => {
     );
   });
 
+  it('accepts RECURRING_DCA registration with CURVE_DIRECT swapProvider', async () => {
+    const result = await registerOrActivateRecipe({
+      userAddress: '0x1111111111111111111111111111111111111111',
+      recipeType: 'RECURRING_DCA',
+      swapProvider: 'CURVE_DIRECT',
+      parametersJson: {
+        maxSlippageBps: 100,
+        totalBudgetUsdc: '50',
+        perExecutionAmountUsdc: '5',
+        mode: 'PULL',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.recipe).toMatchObject({
+      targetProtocol: null,
+      swapProvider: 'CURVE_DIRECT',
+    });
+  });
+
   it('rejects RECURRING_DCA registration when targetProtocol is provided', async () => {
     await expect(
       registerOrActivateRecipe({
