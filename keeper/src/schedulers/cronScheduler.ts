@@ -934,7 +934,11 @@ export async function pollAndTriggerActiveRecipes() {
         });
         const now = new Date();
         const lastExecuted = recipe.lastExecutedAt ? new Date(recipe.lastExecutedAt) : new Date(0);
-        const diffHours = (now.getTime() - lastExecuted.getTime()) / (1000 * 60 * 60);
+        // Guard against clock-skew: if lastExecutedAt is in the future (DB timezone bug),
+        // treat as not-yet-executed so the recipe is not permanently stuck.
+        const diffHours = lastExecuted > now
+          ? 999 // force due
+          : (now.getTime() - lastExecuted.getTime()) / (1000 * 60 * 60);
         const recipeParams = parseRecipeParameters(recipe.parametersJson);
 
         const intervalHours = parseCheckIntervalHours(recipeParams.checkIntervalHours, recipe.recipeType, context);
@@ -1071,10 +1075,11 @@ export async function pollAndTriggerActiveRecipes() {
           try {
             const routePlan = await dcaSwapRouteClient.resolveRoute({
               recipientAddress: recipe.userAddress as `0x${string}`,
-              // Use keeper EOA as fromAddress for LI.FI — contract addresses are rejected
-              // by the LI.FI quoting API. The actual swap is executed by sharedExecutorProxy
-              // on-chain; fromAddress here is only used by LI.FI for route construction.
-              sourceAddress: keeperAccount.address,
+              // fromAddress for Circle API must be SharedExecutorProxy — Circle sets
+              // tokens[0].beneficiary = fromAddress (USDC recipient = proxy contract).
+              // Contract validates tokens[0].beneficiary == msg.sender (proxy itself),
+              // so any other address causes InvalidBeneficiary revert.
+              sourceAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
               amountInBaseUnits: dcaExecutionAmount,
               maxSlippageBps,
               targetAssetSymbol,
@@ -1284,10 +1289,16 @@ export async function pollAndTriggerActiveRecipes() {
         }
 
         // Pre-flight static simulation via eth_call.
-        // minAmountOut is passed as 0n so the on-chain slippage guard doesn't block the preflight
-        // when the simulation runs without the user's real token balance (keeper has 0 USDC).
-        // The real execution uses the route plan's minSwapAssetOutBaseUnits.
-        const simResult = await simulateRecipeStep(
+        // minAmountOut is passed as 0n so the on-chain slippage guard doesn't block the preflight.
+        // KEEPER_SKIP_PREFLIGHT_SIMULATION=true bypasses this when Circle's signed route is
+        // trusted and the simulation would incorrectly fail due to internal LI.FI state
+        // (e.g. 0xc06e fromAddress allowance) that is not user-controllable.
+        if (RUNTIME_CONFIG.skipPreflightSimulation) {
+          console.info(`[Cron Scheduler] Skipping preflight simulation (KEEPER_SKIP_PREFLIGHT_SIMULATION=true) ${context}. Proceeding to enqueue.`);
+        }
+        const simResult = RUNTIME_CONFIG.skipPreflightSimulation
+          ? { success: true as const, estimatedGasUsdc: undefined }
+          : await simulateRecipeStep(
           {
             userAddress: recipe.userAddress as `0x${string}`,
             executorProxyAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,

@@ -72,3 +72,5 @@ Thumbs.db
 keeper/node_modules/*
 
 .vercel
+keeper/bun.lock
+web/bun.lock

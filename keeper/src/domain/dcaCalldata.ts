@@ -137,6 +137,15 @@ export function resolveDcaAllowanceSpenderAddress(
   return ARC_APP_KIT_DCA_USDC_SPENDER;
 }
 
+// Arc Testnet router addresses that pull USDC directly from the user inside the
+// ArcSwapAdapter execution path. These are not present as top-level ABI-decoded
+// addresses in the Circle calldata, so we include them unconditionally when the
+// inner calldata selector is ARC_SWAP_ADAPTER_EXECUTE_SELECTOR (0xaa3e079c).
+const ARC_ROUTE_STRICT_SPENDERS: `0x${string}`[] = [
+  '0xff70f4a1d11995621854f3692acf286d8acd04b2', // LI.FI Fly DEX Router
+  '0x311d3f5530245b839dae6cf91685ae64c605e956', // Curve USDC/EURC Pool
+];
+
 export function getDcaAllowanceSpenderCandidates(
   callData: `0x${string}`,
   targetProtocol: `0x${string}`,
@@ -148,11 +157,17 @@ export function getDcaAllowanceSpenderCandidates(
     routeSpenderAddress
   );
   const decodedSpenders = getDcaDecodedSpenderCandidates(callData);
+  const selector = extractSelectorFromCallData(callData).toLowerCase();
+  // For ArcSwapAdapter routes, include the Arc-specific router contracts that pull
+  // USDC from the user inside the execution path.
+  const arcRouteSpenders =
+    selector === ARC_SWAP_ADAPTER_EXECUTE_SELECTOR ? ARC_ROUTE_STRICT_SPENDERS : [];
   return normalizeDcaSpenderCandidates([
     runtimeSpender,
     ...decodedSpenders,
     targetProtocol,
     CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
+    ...arcRouteSpenders,
   ]).sort() as `0x${string}`[];
 }
 
@@ -176,8 +191,11 @@ export function getDcaStrictRequiredSpenders(
   const selector = extractSelectorFromCallData(callData).toLowerCase();
   const strictDecodedSpenders = getDcaAlwaysStrictDecodedSpenders(callData, userAddress);
   if (selector === DCA_SWAP_SELECTOR || selector === ARC_SWAP_ADAPTER_EXECUTE_SELECTOR) {
+    // For ArcSwapAdapter routes, also require allowances to the Arc-specific router
+    // contracts that pull USDC from the user inside the inner execution path.
     return normalizeDcaSpenderCandidates([
       CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
+      ...ARC_ROUTE_STRICT_SPENDERS,
       ...strictDecodedSpenders,
     ]);
   }

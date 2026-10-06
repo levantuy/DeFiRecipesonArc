@@ -8,6 +8,7 @@ export interface RuntimeConfig {
   arcRpcRetryCount: number;
   schedulerSimulationBackoffMs: number;
   simulationEstimateGas: boolean;
+  skipPreflightSimulation: boolean;
   keeperHealthPort: number;
   keeperTxRetryMaxAttempts: number;
   keeperTxReceiptTimeoutMs: number;
@@ -130,6 +131,7 @@ export const RUNTIME_CONFIG: RuntimeConfig = {
   arcRpcRetryCount: parseIntegerEnv('ARC_RPC_RETRY_COUNT', 2, 0, 10),
   schedulerSimulationBackoffMs: parseIntegerEnv('SCHEDULER_SIMULATION_BACKOFF_MS', 30_000, 5_000, 300_000),
   simulationEstimateGas: parseBooleanEnv('KEEPER_SIMULATION_ESTIMATE_GAS', false),
+  skipPreflightSimulation: parseBooleanEnv('KEEPER_SKIP_PREFLIGHT_SIMULATION', false),
   keeperHealthPort: parseIntegerEnv('KEEPER_HEALTH_PORT', 8787, 1, 65535),
   keeperTxRetryMaxAttempts: parseIntegerEnv('KEEPER_TX_RETRY_MAX_ATTEMPTS', 7, 1, 10),
   keeperTxReceiptTimeoutMs: parseIntegerEnv('KEEPER_TX_RECEIPT_TIMEOUT_MS', 10_000, 1_000, 300_000),

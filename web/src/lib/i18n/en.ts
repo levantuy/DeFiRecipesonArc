@@ -1,4 +1,4 @@
-﻿import type { Dictionary } from './types';
+import type { Dictionary } from './types';
 
 export const en = {
   navArcTestnet: 'Arc Testnet (5042002)', navWrongNetwork: 'Wrong Network - switch to Arc 5042002', navLanguage: 'Language',

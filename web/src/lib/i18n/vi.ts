@@ -1,4 +1,4 @@
-﻿import type { Dictionary } from './types';
+import type { Dictionary } from './types';
 
 export const vi = {
   navArcTestnet: 'Arc Testnet (5042002)', navWrongNetwork: 'Sai mạng - chuyển sang Arc 5042002', navLanguage: 'Ngôn ngữ',

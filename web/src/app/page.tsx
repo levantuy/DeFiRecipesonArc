@@ -915,12 +915,30 @@ export default function Home() {
           }
         }
 
+        // Always approve SharedExecutorProxy (primary spender that pulls from user).
         await ensureDcaUsdcAllowance(
           connectedAddress,
           parsedDcaConfig.totalDcaBudgetBaseUnits,
           parsedDcaConfig.executionMode,
           CONTRACT_ADDRESSES.sharedExecutorProxy
         );
+
+        // Also approve all runtime-required spenders returned by the keeper precheck
+        // (e.g. LI.FI Fly Router, Curve Pool) — these are route-specific and vary by
+        // swap provider. Missing any one of them causes ERC20 transfer revert mid-execution.
+        const spendersToApprove = new Set<`0x${string}`>(
+          runtimeRequiredSpenders.map((s) => s.toLowerCase() as `0x${string}`)
+        );
+        // Remove SharedExecutorProxy — already approved above.
+        spendersToApprove.delete(CONTRACT_ADDRESSES.sharedExecutorProxy.toLowerCase() as `0x${string}`);
+        for (const spender of spendersToApprove) {
+          await ensureDcaUsdcAllowance(
+            connectedAddress,
+            parsedDcaConfig.totalDcaBudgetBaseUnits,
+            parsedDcaConfig.executionMode,
+            spender
+          );
+        }
 
         normalizedDcaPayload = {
           totalDcaBudgetUsdc: dcaConfig.totalDcaBudgetUsdc.trim(),

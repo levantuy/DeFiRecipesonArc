@@ -1,11 +1,24 @@
 import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
-import { createWalletClient, formatUnits, http } from 'viem';
+import { createWalletClient, encodeAbiParameters, formatUnits, http, parseAbiParameters } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from 'viem/chains';
 import { ExecutionStatus, RecipeStatus } from '../db/types';
 import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 import { ARC_TESTNET_CONFIG, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
+
+// SharedExecutorProxy on-chain selector — differs from ABI-derived selector
+const EXECUTOR_EXECUTE_SELECTOR = '0x4631bcd9' as const;
+function encodeExecutorCalldata(
+  user: `0x${string}`, targetProtocol: `0x${string}`,
+  callData: `0x${string}`, minAmountOut: bigint
+): `0x${string}` {
+  const encoded = encodeAbiParameters(
+    parseAbiParameters('address, address, bytes, uint256'),
+    [user, targetProtocol, callData, minAmountOut]
+  );
+  return (EXECUTOR_EXECUTE_SELECTOR + encoded.slice(2)) as `0x${string}`;
+}
 import { getKeeperPrivateKey, RUNTIME_CONFIG } from '../config/runtime';
 import {
   incrementCounter,
@@ -532,11 +545,15 @@ export async function executeRecipeStepDirectly(data: RecipeExecutionJobData) {
     try {
       incrementCounter('rpc.total');
       console.log(`[Tx Relayer] ${context} attempt ${attempt}/${maxRetries} submitting via ${rpcUrl}...`);
-      hash = await walletClient.writeContract({
-        address: data.executorProxyAddress,
-        abi: SHARED_EXECUTOR_PROXY_ABI,
-        functionName: 'executeRecipeStep',
-        args: [data.userAddress, data.targetProtocolAddress, data.callData, BigInt(data.minAmountOut)],
+      hash = await walletClient.sendTransaction({
+        chain: arcTestnet,
+        to: data.executorProxyAddress,
+        data: encodeExecutorCalldata(
+          data.userAddress,
+          data.targetProtocolAddress,
+          data.callData,
+          BigInt(data.minAmountOut)
+        ),
       });
       break;
     } catch (err: unknown) {

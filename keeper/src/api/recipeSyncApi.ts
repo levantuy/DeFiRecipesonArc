@@ -827,6 +827,8 @@ export async function precheckDcaAllowance(
   try {
     routePlan = await dcaSwapRouteClient.resolveRoute({
       recipientAddress: payload.userAddress,
+      // fromAddress must be SharedExecutorProxy so Circle binds tokens[0].beneficiary to it.
+      sourceAddress: CONTRACT_ADDRESSES.sharedExecutorProxy as `0x${string}`,
       amountInBaseUnits: payload.perExecutionBaseUnits,
       maxSlippageBps: payload.maxSlippageBps,
       targetAssetSymbol: payload.targetAssetSymbol,

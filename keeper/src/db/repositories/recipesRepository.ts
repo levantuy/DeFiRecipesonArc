@@ -96,6 +96,7 @@ export const recipesRepository = {
           "parametersJson" = $3::jsonb,
           "targetProtocol" = CASE WHEN $4::boolean THEN $5::text ELSE "targetProtocol" END,
           "swapProvider" = CASE WHEN $6::boolean THEN $7::"SwapProvider" ELSE "swapProvider" END,
+          "lastExecutedAt" = NULL,
           "updatedAt" = $8
         WHERE id = $1
         RETURNING
@@ -323,28 +324,31 @@ export const recipesRepository = {
     return rows[0] ? mapRecipeRow(rows[0]) : null;
   },
 
-  async updateLastExecutedAt(recipeId: string, executedAt: Date): Promise<void> {
+  async updateLastExecutedAt(recipeId: string, _executedAt: Date): Promise<void> {
     await query({
-      name: 'recipe-update-last-executed-at',
+      name: 'recipe-update-last-executed-at-v2',
       text: `
         UPDATE "ActiveRecipe"
-        SET "lastExecutedAt" = $2, "updatedAt" = $3
+        SET "lastExecutedAt" = NOW(), "updatedAt" = NOW()
         WHERE id = $1
       `,
-      values: [recipeId, executedAt, executedAt],
+      values: [recipeId],
     });
   },
 
-  async claimExecutionSlot(recipeId: string, claimedAt: Date, intervalHours: number): Promise<boolean> {
-    const intervalStart = new Date(claimedAt.getTime() - intervalHours * 60 * 60 * 1000);
+  async claimExecutionSlot(recipeId: string, _claimedAt: Date, intervalHours: number): Promise<boolean> {
+    // Use DB-side NOW() for both the write and the interval comparison so the arithmetic
+    // is consistent regardless of whether the DB server clock matches the keeper's clock.
+    // intervalHours is passed as a plain number; Postgres computes the cutoff as an interval.
     const rows = await query<ActiveRecipeRow>({
-      name: 'recipe-claim-execution-slot',
+      name: 'recipe-claim-execution-slot-v3',
       text: `
         UPDATE "ActiveRecipe"
-        SET "lastExecutedAt" = $2, "updatedAt" = $2
+        SET "lastExecutedAt" = NOW(), "updatedAt" = NOW()
         WHERE id = $1
           AND status = 'ACTIVE'::"RecipeStatus"
-          AND ("lastExecutedAt" IS NULL OR "lastExecutedAt" <= $3)
+          AND ("lastExecutedAt" IS NULL
+            OR "lastExecutedAt" <= NOW() - ($2 * interval '1 hour'))
         RETURNING
           id,
           "userAddress",
@@ -357,7 +361,7 @@ export const recipesRepository = {
           "createdAt",
           "updatedAt"
       `,
-      values: [recipeId, claimedAt, intervalStart],
+      values: [recipeId, intervalHours],
     });
 
     return rows.length > 0;

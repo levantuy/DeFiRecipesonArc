@@ -1,8 +1,29 @@
 import { createPublicClient, http, fallback, Address, Hex, type PublicClient } from 'viem';
 import { arcTestnet } from 'viem/chains';
+import { encodeAbiParameters, parseAbiParameters } from 'viem';
 import { CONTRACT_ADDRESSES, SHARED_EXECUTOR_PROXY_ABI } from '../config/contracts';
 import { RUNTIME_CONFIG } from '../config/runtime';
 import { incrementCounter } from '../observability/metrics';
+
+// The deployed SharedExecutorProxy (0x7A3e5F10...) uses a custom selector 0x4631bcd9
+// for its main execution function. The function takes (address,address,bytes,uint256)
+// but the name differs from the ABI declaration. We encode calldata manually to use
+// the correct on-chain selector instead of the ABI-derived one (0x52b6fe7f).
+const EXECUTOR_EXECUTE_SELECTOR = '0x4631bcd9' as const;
+
+function encodeExecutorCalldata(
+  user: `0x${string}`,
+  targetProtocol: `0x${string}`,
+  callData: `0x${string}`,
+  minAmountOut: bigint
+): `0x${string}` {
+  // ABI encode (address,address,bytes,uint256) and prepend selector
+  const encoded = encodeAbiParameters(
+    parseAbiParameters('address, address, bytes, uint256'),
+    [user, targetProtocol, callData, minAmountOut]
+  );
+  return (EXECUTOR_EXECUTE_SELECTOR + encoded.slice(2)) as `0x${string}`;
+}
 
 const dedicatedPublicClientCache = new Map<string, ReturnType<typeof createPublicClient>>();
 
@@ -90,12 +111,19 @@ async function trySimulationWithClient(
   includeGasEstimate: boolean,
   proxyAddress: Address
 ): Promise<{ success: true; estimatedGasUsdc?: bigint }> {
+  // Use raw calldata with correct on-chain selector (0x4631bcd9) instead of
+  // ABI-derived selector (0x52b6fe7f) which does not match the deployed contract.
+  const rawCalldata = encodeExecutorCalldata(
+    req.userAddress,
+    req.targetProtocolAddress,
+    req.callData,
+    req.minAmountOut
+  );
+
   incrementCounter('rpc.total');
-  await client.simulateContract({
-    address: proxyAddress,
-    abi: SHARED_EXECUTOR_ABI,
-    functionName: 'executeRecipeStep',
-    args: [req.userAddress, req.targetProtocolAddress, req.callData, req.minAmountOut],
+  await client.call({
+    to: proxyAddress,
+    data: rawCalldata,
     account: req.keeperAddress,
   });
 
@@ -104,11 +132,9 @@ async function trySimulationWithClient(
   }
 
   incrementCounter('rpc.total');
-  const gasEstimate = await client.estimateContractGas({
-    address: proxyAddress,
-    abi: SHARED_EXECUTOR_ABI,
-    functionName: 'executeRecipeStep',
-    args: [req.userAddress, req.targetProtocolAddress, req.callData, req.minAmountOut],
+  const gasEstimate = await client.estimateGas({
+    to: proxyAddress,
+    data: rawCalldata,
     account: req.keeperAddress,
   });
 
