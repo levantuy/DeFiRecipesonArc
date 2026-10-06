@@ -13,16 +13,11 @@ export interface AccountLink {
 
 export const APP_VERSION = "v0.1.2";
 
-function appLink(envKey: string, fallback: string): string {
-  const value = process.env[envKey];
-  return typeof value === "string" && value.length > 0 ? value : fallback;
-}
-
 export const footerLinks: FooterLink[] = [
-  { id: "x", label: "X", href: appLink("NEXT_PUBLIC_APP_LINK_X", "https://x.com/defirecipes") },
-  { id: "discord", label: "Discord", href: appLink("NEXT_PUBLIC_APP_LINK_DISCORD", "https://discord.gg/BRHdeUnAq") },
-  { id: "github", label: "GitHub", href: appLink("NEXT_PUBLIC_APP_LINK_GITHUB", "https://github.com/levantuy") },
-  { id: "documentation", label: "Documentation", href: appLink("NEXT_PUBLIC_APP_LINK_DOCUMENTATION", "https://docs.defirecipes.com") },
+  { id: "x", label: "X", href: "https://x.com/defirecipes" },
+  { id: "discord", label: "Discord", href: "https://discord.gg/BRHdeUnAq" },
+  { id: "github", label: "GitHub", href: "https://github.com/levantuy" },
+  { id: "documentation", label: "Documentation", href: "https://docs.defirecipes.com" },
 ];
 
 export const accountMenuLinks: AccountLink[] = [
