@@ -1,0 +1,8 @@
+{
+  "name": "defi-recipes-on-arc",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"const {spawn}=require('child_process');const web=spawn('node',['node_modules/next/dist/bin/next','dev','--port','5173','--hostname','0.0.0.0'],{cwd:__dirname+'/web',env:{...process.env,NEXT_DIST_DIR:'.next-dev'},stdio:'inherit'});web.on('exit',c=>process.exit(c??0));process.on('SIGINT',()=>web.kill('SIGINT'));process.on('SIGTERM',()=>web.kill('SIGTERM'));\""
+  }
+}

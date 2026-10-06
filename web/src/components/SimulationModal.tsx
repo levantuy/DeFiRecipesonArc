@@ -18,8 +18,31 @@ import { vi } from '@/lib/i18n/vi';
 import { parseIntervalHours } from '@/lib/intervalConfig';
 
 export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA';
-export type SwapProvider = 'ARC_APP_KIT_SWAP';
+export type SwapProvider = 'ARC_APP_KIT_SWAP' | 'ARC_LIFI_SWAP' | 'LIFI_DIRECT' | 'CURVE_DIRECT';
 export type IntervalPreset = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
+
+export const SWAP_PROVIDER_OPTIONS: { value: SwapProvider; label: string; description: string }[] = [
+  {
+    value: 'CURVE_DIRECT',
+    label: 'Curve Direct (Recommended)',
+    description: 'Calls Curve USDC/EURC pool directly. No external API dependency — most reliable on Arc Testnet.',
+  },
+  {
+    value: 'ARC_APP_KIT_SWAP',
+    label: 'Arc App Kit Swap',
+    description: 'Circle Stablecoin Service via ArcSwapAdapter. Requires testnet liquidity.',
+  },
+  {
+    value: 'ARC_LIFI_SWAP',
+    label: 'LI.FI via Arc App Kit',
+    description: 'Uses @lifi/sdk with Arc Testnet chain registration. Intermittent on testnet.',
+  },
+  {
+    value: 'LIFI_DIRECT',
+    label: 'LI.FI Direct REST',
+    description: 'LI.FI REST /v1/quote without SDK. Intermittent on testnet.',
+  },
+];
 
 export interface RecipeConfig {
   id: string;
@@ -101,6 +124,7 @@ interface SimulationModalProps {
     sessionSpendLimitUsdc: string;
     intervalHours: number;
     intervalPreset: IntervalPreset;
+    swapProvider?: SwapProvider;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -135,6 +159,9 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
   const dictionary = lang === 'vi' ? vi : en;
   const [maxSlippageBps, setMaxSlippageBps] = useState(recipe?.maxSlippageBps ?? 50);
   const [sessionSpendLimitUsdc, setSessionSpendLimitUsdc] = useState(DEFAULT_SESSION_SPEND_LIMIT_USDC);
+  const [selectedSwapProvider, setSelectedSwapProvider] = useState<SwapProvider>(
+    (recipe?.swapProvider as SwapProvider | undefined) ?? 'CURVE_DIRECT'
+  );
   const [totalDcaBudgetUsdc, setTotalDcaBudgetUsdc] = useState(recipe?.totalDcaBudgetUsdc ?? DCA_DEFAULT_TOTAL_BUDGET_USDC);
   const [perExecutionUsdc, setPerExecutionUsdc] = useState(recipe?.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
   const [intervalHours, setIntervalHours] = useState(String(recipe?.defaultIntervalHours ?? 24));
@@ -213,6 +240,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
       setPerExecutionUsdc(recipe.perExecutionUsdc ?? DCA_DEFAULT_PER_EXECUTION_USDC);
       setIntervalHours(String(recipe.defaultIntervalHours ?? (recipe.recipeType === 'AUTO_COMPOUNDER' ? 168 : 24)));
       setIntervalPreset('CUSTOM');
+      setSelectedSwapProvider((recipe.swapProvider as SwapProvider | undefined) ?? 'CURVE_DIRECT');
       setAllowanceCheck(null);
       setAllowanceCheckError('');
       setIsCheckingAllowance(false);
@@ -371,6 +399,50 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   <div className="mt-0.5 text-base font-semibold text-white">{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}</div>
                 </div>
 
+                {/* Swap Provider Selector — shown only for DCA recipe, right at the top */}
+                {isDcaRecipe && (
+                  <div className="rounded-xl border border-blue-700/50 bg-blue-950/30 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-blue-300">Swap Provider</span>
+                      <span className="rounded-full border border-blue-700/60 bg-blue-900/40 px-2 py-0.5 text-[10px] font-mono text-blue-300">
+                        {selectedSwapProvider}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {SWAP_PROVIDER_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setSelectedSwapProvider(opt.value)}
+                          className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${
+                            selectedSwapProvider === opt.value
+                              ? 'border-blue-500 bg-blue-900/50 ring-1 ring-blue-500/30'
+                              : 'border-slate-700 bg-slate-900/60 hover:border-slate-500 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                            selectedSwapProvider === opt.value
+                              ? 'border-blue-400 bg-blue-400'
+                              : 'border-slate-600 bg-transparent'
+                          }`}>
+                            {selectedSwapProvider === opt.value && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <div className={`text-xs font-semibold ${selectedSwapProvider === opt.value ? 'text-white' : 'text-slate-300'}`}>
+                              {opt.label}
+                            </div>
+                            <div className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                              {opt.description}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
                   <div className="mb-2 text-xs uppercase tracking-wider font-mono text-slate-400">{t('routingAssetFlow')}</div>
                   <div className="space-y-2">
@@ -394,7 +466,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     {t('targetProtocol')}: {recipe.targetProtocolAddress || t('routeResolved')}
                   </div>
                   <div className="mt-1 break-all text-[11px] font-mono text-slate-500">
-                    {t('swapProvider')}: {recipe.swapProvider || t('na')}
+                    {t('swapProvider')}: {isDcaRecipe ? selectedSwapProvider : (recipe.swapProvider || t('na'))}
                   </div>
                 </div>
 
@@ -708,6 +780,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     sessionSpendLimitUsdc: string;
                     intervalHours: number;
                     intervalPreset: IntervalPreset;
+                    swapProvider?: SwapProvider;
                     dcaConfig?: {
                       totalDcaBudgetUsdc: string;
                       perExecutionUsdc: string;
@@ -720,6 +793,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     sessionSpendLimitUsdc: sessionSpendLimitUsdc.trim(),
                     intervalHours: parseIntervalHours(intervalHours),
                     intervalPreset,
+                    ...(isDcaRecipe ? { swapProvider: selectedSwapProvider } : {}),
                   };
 
                   // Ensure session spend limit parses correctly before submitting activation.

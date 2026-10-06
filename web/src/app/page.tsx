@@ -20,7 +20,7 @@ import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { parseUsdcAmountToBaseUnits } from '@/lib/dcaConfig';
 import { parseIntervalHours } from '@/lib/intervalConfig';
-import type { IntervalPreset } from '@/components/SimulationModal';
+import type { IntervalPreset, SwapProvider } from '@/components/SimulationModal';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { FooterLinkIcon } from './layout-icons';
@@ -835,11 +835,13 @@ export default function Home() {
     dcaConfig,
     intervalHours,
     intervalPreset,
+    swapProvider,
   }: {
     maxSlippageBps: number;
     sessionSpendLimitUsdc: string;
     intervalHours: number;
     intervalPreset: IntervalPreset;
+    swapProvider?: SwapProvider;
     dcaConfig?: {
       totalDcaBudgetUsdc: string;
       perExecutionUsdc: string;
@@ -967,9 +969,11 @@ export default function Home() {
         ...(selectedRecipeSnapshot.targetProtocolAddress
           ? { targetProtocolAddress: selectedRecipeSnapshot.targetProtocolAddress }
           : {}),
-        ...(selectedRecipeSnapshot.swapProvider
-          ? { swapProvider: selectedRecipeSnapshot.swapProvider }
-          : {}),
+        ...(swapProvider
+          ? { swapProvider }
+          : selectedRecipeSnapshot.swapProvider
+            ? { swapProvider: selectedRecipeSnapshot.swapProvider }
+            : {}),
         maxSlippageBps,
         maxUsdcSpendLimit: sessionSpendLimitUsdc.trim(),
         parametersJson: {
