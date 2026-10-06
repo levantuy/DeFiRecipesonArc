@@ -28,6 +28,7 @@ import {
   remainingBudgetBaseUnits,
   toPersistedDcaParameters,
 } from '../domain/dcaConfig';
+import { parseCheckIntervalHours } from '../domain/intervalConfig';
 import {
   DCA_SWAP_SELECTOR,
   DCA_ALWAYS_STRICT_SPENDERS,
@@ -44,12 +45,6 @@ import {
 const AUTO_COMPOUNDER_LENDING_BORROWING_ADDRESS = CONTRACT_ADDRESSES.autoCompounderLendingBorrowing;
 import { getKeeperAccount, getKeeperWalletClient } from '../index';
 import { createDcaSwapRouteClientFromRuntime } from '../integrations/circle/dcaSwapRouteClient';
-const MIN_CHECK_INTERVAL_HOURS = 1;
-const MAX_CHECK_INTERVAL_HOURS = 720;
-const DEFAULT_CHECK_INTERVAL_HOURS: Record<string, number> = {
-  RECURRING_DCA: 24,
-  AUTO_COMPOUNDER: 168,
-};
 const SIMULATION_RATE_LIMIT_BACKOFF_MS = RUNTIME_CONFIG.schedulerSimulationBackoffMs;
 const dedicatedReadClientCache = new Map<string, ReturnType<typeof createPublicClient>>();
 
@@ -274,22 +269,8 @@ function resolveDcaTargetAssetSymbol(
   };
 }
 
-export function parseCheckIntervalHours(intervalHours: unknown, recipeType: RecipeType, context = ''): number {
-  const value = intervalHours === undefined
-    ? DEFAULT_CHECK_INTERVAL_HOURS[recipeType] ?? 24
-    : typeof intervalHours === 'string'
-      ? Number(intervalHours.trim())
-      : intervalHours;
-  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
-    throw new Error(`Invalid checkIntervalHours ${context}: must be a whole number of hours.`);
-  }
-  if (value < MIN_CHECK_INTERVAL_HOURS || value > MAX_CHECK_INTERVAL_HOURS) {
-    throw new Error(
-      `Invalid checkIntervalHours ${context}: must be between ${MIN_CHECK_INTERVAL_HOURS} and ${MAX_CHECK_INTERVAL_HOURS}.`
-    );
-  }
-  return value;
-}
+// parseCheckIntervalHours is re-exported for backward-compat with test imports
+export { parseCheckIntervalHours } from '../domain/intervalConfig';
 
 function toBigIntOrNull(value: unknown): bigint | null {
   if (typeof value === 'bigint') {

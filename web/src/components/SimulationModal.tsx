@@ -18,7 +18,7 @@ import { vi } from '@/lib/i18n/vi';
 import { parseIntervalHours } from '@/lib/intervalConfig';
 
 export type RecipeType = 'AUTO_COMPOUNDER' | 'RECURRING_DCA';
-export type SwapProvider = 'ARC_APP_KIT_SWAP' | 'ARC_LIFI_SWAP' | 'LIFI_DIRECT' | 'CURVE_DIRECT';
+export type SwapProvider = 'ARC_APP_KIT_SWAP' | 'ARC_LIFI_SWAP' | 'LIFI_DIRECT' | 'CURVE_DIRECT' | 'CIRCLE_DIRECT';
 export type IntervalPreset = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
 
 export const SWAP_PROVIDER_OPTIONS: { value: SwapProvider; label: string; description: string }[] = [
@@ -41,6 +41,11 @@ export const SWAP_PROVIDER_OPTIONS: { value: SwapProvider; label: string; descri
     value: 'LIFI_DIRECT',
     label: 'LI.FI Direct REST',
     description: 'LI.FI REST /v1/quote without SDK. Intermittent on testnet.',
+  },
+  {
+    value: 'CIRCLE_DIRECT',
+    label: 'Circle Direct',
+    description: 'Circle Stablecoin Service REST API without Arc SDK adapter.',
   },
 ];
 

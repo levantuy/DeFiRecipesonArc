@@ -245,7 +245,10 @@ describe('Cron Scheduler Recipe Triggering', () => {
 
     expect(simulateRecipeStepMock).toHaveBeenCalledTimes(1);
     const simReq = simulateRecipeStepMock.mock.calls[0][0];
-    expect(simReq.minAmountOut).toBe(50000000n);
+    // minAmountOut is intentionally 0n for preflight simulation so the on-chain
+    // slippage guard does not block the static call. The actual spend amount is
+    // carried in jobData.minAmountOut / dcaExecutionAmountBaseUnits instead.
+    expect(simReq.minAmountOut).toBe(0n);
     expect(simReq.callData).toBe('0x12345678');
 
     expect(queueAddMock).toHaveBeenCalledTimes(1);

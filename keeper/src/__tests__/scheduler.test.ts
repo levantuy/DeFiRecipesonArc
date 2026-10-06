@@ -9,11 +9,11 @@ import {
 } from '../schedulers/queueScheduler';
 import { RUNTIME_CONFIG } from '../config/runtime';
 
-const { writeContractMock, createWalletClientMock } = vi.hoisted(() => {
+const { sendTransactionMock, createWalletClientMock } = vi.hoisted(() => {
   return {
-    writeContractMock: vi.fn(),
+    sendTransactionMock: vi.fn(),
     createWalletClientMock: vi.fn(() => ({
-      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
     })),
   };
 });
@@ -107,11 +107,11 @@ describe('Queue Scheduler & Job Execution', () => {
       estimatedGasUsdc: 85000n,
     });
 
-    writeContractMock.mockResolvedValue(
+    sendTransactionMock.mockResolvedValue(
       '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     );
     createWalletClientMock.mockReturnValue({
-      writeContract: writeContractMock,
+      sendTransaction: sendTransactionMock,
     });
     findByIdMock.mockResolvedValue({
       id: 'test-recipe-123',
@@ -128,7 +128,7 @@ describe('Queue Scheduler & Job Execution', () => {
     const result = await executeRecipeStepDirectly(sampleJobData);
 
     expect(createWalletClientMock).toHaveBeenCalledTimes(1);
-    expect(writeContractMock).toHaveBeenCalledTimes(1);
+    expect(sendTransactionMock).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('SIMULATED_AND_EXECUTED');
     expect(result.txHash).toBe(
       '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -149,7 +149,7 @@ describe('Queue Scheduler & Job Execution', () => {
       estimatedGasUsdc: 90000n,
     });
 
-    writeContractMock
+    sendTransactionMock
       .mockRejectedValueOnce(
         new Error(
           'could not coalesce error (error={"code":-32011,"message":"request limit reached"}, payload={"method":"eth_sendRawTransaction"})'
@@ -160,7 +160,7 @@ describe('Queue Scheduler & Job Execution', () => {
       );
 
     createWalletClientMock.mockReturnValue({
-      writeContract: writeContractMock,
+      sendTransaction: sendTransactionMock,
     });
 
     vi.spyOn(simulationEngine.publicClient, 'waitForTransactionReceipt').mockResolvedValueOnce({
@@ -171,7 +171,7 @@ describe('Queue Scheduler & Job Execution', () => {
 
     const result = await executeRecipeStepDirectly(sampleJobData);
 
-    expect(writeContractMock).toHaveBeenCalledTimes(2);
+    expect(sendTransactionMock).toHaveBeenCalledTimes(2);
     expect(createWalletClientMock).toHaveBeenCalledTimes(2);
     expect(result.txHash).toBe(
       '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -187,11 +187,11 @@ describe('Queue Scheduler & Job Execution', () => {
       estimatedGasUsdc: 91000n,
     });
 
-    writeContractMock.mockResolvedValue(
+    sendTransactionMock.mockResolvedValue(
       '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
     );
     createWalletClientMock.mockReturnValue({
-      writeContract: writeContractMock,
+      sendTransaction: sendTransactionMock,
     });
 
     const queueAddSpy = vi.spyOn(txConfirmationQueue, 'add').mockResolvedValueOnce({} as never);
@@ -213,11 +213,11 @@ describe('Queue Scheduler & Job Execution', () => {
       estimatedGasUsdc: 92000n,
     });
 
-    writeContractMock.mockResolvedValue(
+    sendTransactionMock.mockResolvedValue(
       '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
     );
     createWalletClientMock.mockReturnValue({
-      writeContract: writeContractMock,
+      sendTransaction: sendTransactionMock,
     });
 
     findByIdMock.mockResolvedValue({

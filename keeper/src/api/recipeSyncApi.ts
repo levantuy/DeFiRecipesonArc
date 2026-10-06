@@ -18,6 +18,7 @@ import {
   parseDcaConfigStateStrict,
   toPersistedDcaParameters,
 } from '../domain/dcaConfig';
+import { parseCheckIntervalHours } from '../domain/intervalConfig';
 import {
   DCA_SWAP_SELECTOR,
   DCA_ALWAYS_STRICT_SPENDERS,
@@ -133,12 +134,6 @@ function parseSwapProvider(value: unknown): SwapProvider {
 const MIN_SESSION_SPEND_LIMIT_USDC = '1';
 const MAX_SESSION_SPEND_LIMIT_USDC = '1000000';
 const DEFAULT_SESSION_SPEND_LIMIT_USDC = '500';
-const MIN_CHECK_INTERVAL_HOURS = 1;
-const MAX_CHECK_INTERVAL_HOURS = 720;
-const DEFAULT_CHECK_INTERVAL_HOURS: Record<string, number> = {
-  RECURRING_DCA: 24,
-  AUTO_COMPOUNDER: 168,
-};
 
 function usdcDecimalStringToBaseUnits(normalized: string): bigint {
   const [wholePartRaw, fractionalPartRaw = ''] = normalized.split('.');
@@ -177,21 +172,6 @@ function parseSessionSpendLimitUsdc(value: unknown): { display: string; baseUnit
   return { display: normalized, baseUnits };
 }
 
-function parseCheckIntervalHours(rawValue: unknown, recipeType: RecipeType): number {
-  const value = rawValue === undefined
-    ? DEFAULT_CHECK_INTERVAL_HOURS[recipeType] ?? 24
-    : typeof rawValue === 'string'
-      ? Number(rawValue.trim())
-      : rawValue;
-
-  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
-    throw new Error('checkIntervalHours must be a whole number of hours.');
-  }
-  if (value < MIN_CHECK_INTERVAL_HOURS || value > MAX_CHECK_INTERVAL_HOURS) {
-    throw new Error(`checkIntervalHours must be between ${MIN_CHECK_INTERVAL_HOURS} and ${MAX_CHECK_INTERVAL_HOURS}.`);
-  }
-  return value;
-}
 
 function parseRegisterPayload(rawBody: unknown): {
   userAddress: string;

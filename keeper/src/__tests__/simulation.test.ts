@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Abi } from 'viem';
 import { simulateRecipeStep, SimulationRequest, publicClient } from '../simulation/staticSimulationEngine';
 
 describe('Static Simulation Engine', () => {
@@ -18,7 +17,7 @@ describe('Static Simulation Engine', () => {
   });
 
   it('should handle simulation errors gracefully when contract execution reverts or fails', async () => {
-    vi.spyOn(publicClient, 'simulateContract').mockRejectedValueOnce(
+    vi.spyOn(publicClient, 'call').mockRejectedValueOnce(
       new Error('Execution reverted: Guardrail: Protocol not whitelisted')
     );
 
@@ -28,18 +27,10 @@ describe('Static Simulation Engine', () => {
   });
 
   it('should return estimated gas when simulation succeeds', async () => {
-    vi.spyOn(publicClient, 'simulateContract').mockResolvedValueOnce({
-      result: null,
-      request: {
-        abi: [] as unknown as Abi,
-        address: '0x0000000000000000000000000000000000000001',
-        functionName: 'executeRecipeStep',
-        args: [],
-      },
-    });
-    vi.spyOn(publicClient, 'estimateContractGas').mockResolvedValueOnce(85000n);
+    vi.spyOn(publicClient, 'call').mockResolvedValueOnce({ data: '0x' });
+    vi.spyOn(publicClient, 'estimateGas').mockResolvedValueOnce(85000n);
 
-    const result = await simulateRecipeStep(dummyRequest);
+    const result = await simulateRecipeStep(dummyRequest, { includeGasEstimate: true });
     expect(result.success).toBe(true);
     expect(result.estimatedGasUsdc).toBe(85000n);
   });
