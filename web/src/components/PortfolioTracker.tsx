@@ -73,6 +73,18 @@ function toStatusClasses(status: AuditLog['status']): string {
   return 'bg-rose-950 border-rose-800 text-rose-400';
 }
 
+function toRelativeTimeClient(timestampMs: number, nowMs: number = Date.now()): string {
+  const diffMs = nowMs - timestampMs;
+  if (diffMs < 0) return 'just now';
+  if (diffMs < 60_000) return 'just now';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 function formatAbsoluteTimestamp(isoTimestamp: string, locale: string): string {
   const parsed = Date.parse(isoTimestamp);
   if (!Number.isFinite(parsed)) {
@@ -152,6 +164,12 @@ const PortfolioTrackerContent: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const isMountedRef = useRef(true);
   const activeLogsRequestRef = useRef(0);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
     const queryStatus = (safeSearchParams.get('status') || 'ALL').toUpperCase() as StatusFilter;
     return VALID_STATUS_FILTERS.includes(queryStatus) ? queryStatus : 'ALL';
@@ -599,7 +617,7 @@ const PortfolioTrackerContent: React.FC = () => {
                   <td className="px-4 py-3 font-mono text-xs">{formatGasUsedUsdc(log.gasUsedUsdc) || t('na')}</td>
                   <td className="px-4 py-3 text-xs">
                     <div className="text-slate-300 font-mono">{formatAbsoluteTimestamp(log.timestampIso, locale)}</div>
-                    <div className="text-slate-500">{log.timestampRelative}</div>
+                    <div className="text-slate-500">{toRelativeTimeClient(log.timestampMs, now)}</div>
                   </td>
                 </tr>
               ))}

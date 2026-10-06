@@ -19,8 +19,8 @@ export type RecipeStatus = (typeof RecipeStatus)[keyof typeof RecipeStatus];
 export const SwapProvider = {
   ARC_LIFI_SWAP: 'ARC_LIFI_SWAP',
   ARC_APP_KIT_SWAP: 'ARC_APP_KIT_SWAP',
-  LIFI_DIRECT: 'LIFI_DIRECT',
   CURVE_DIRECT: 'CURVE_DIRECT',
+  LIFI_DIRECT: 'LIFI_DIRECT',
   CIRCLE_DIRECT: 'CIRCLE_DIRECT',
 } as const;
 
