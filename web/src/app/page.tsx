@@ -16,8 +16,7 @@ import {
   estimateDcaRuns,
   parseDcaActivationConfig,
 } from '@/lib/dcaConfig';
-import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
-import { LogoBrand } from '@/components/LogoBrand';
+import { ShieldCheck, Sparkles, Cpu, Pause, Play, Trash2, Loader2, ExternalLink, Activity, Clock3, RotateCcw, CheckCircle2, XCircle } from 'lucide-react';
 import { parseUnits } from 'viem';
 import { parseUsdcAmountToBaseUnits } from '@/lib/dcaConfig';
 import { parseIntervalHours } from '@/lib/intervalConfig';
@@ -1312,11 +1311,6 @@ export default function Home() {
           <div className="absolute -left-10 -top-10 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
           <div className="relative z-10 space-y-4 max-w-3xl">
-            {/* Hero logo mark — large, prominent */}
-            <div className="mb-2">
-              <LogoBrand variant="mark" size="xl" />
-            </div>
-
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-950/80 border border-blue-800 text-blue-400 text-xs font-semibold">
               <Sparkles className="h-3.5 w-3.5" />
               <span>{t('heroBadge')}</span>
@@ -1346,169 +1340,202 @@ export default function Home() {
         {/* Recipe Catalog */}
         <RecipeCatalog onSelectRecipe={(recipe) => setSelectedRecipe(recipe)} />
 
-        <section className="glass-card p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-white">{t('activeDelegations')}</h2>
-            <div className="text-right space-y-1">
-              <span className="block text-xs text-slate-400 font-mono">{t('pauseRevoke')}</span>
-              <span className="block text-[11px] font-mono text-slate-500">
-                {t('dataSource')}: {delegationDataSource === 'keeper-db' ? t('keeperDb') : delegationDataSource === 'memory-fallback' ? t('memoryFallback') : t('unknown')}
+        <section className="glass-card overflow-hidden">
+          {/* Section header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: 'rgba(172,198,233,0.10)' }}>
+                <Activity className="h-3.5 w-3.5" style={{ color: 'var(--accent)' }} />
+              </div>
+              <h2 className="display text-base font-semibold text-ink">{t('activeDelegations')}</h2>
+              {/* Data source badge */}
+              <span className="mono rounded-full border px-2 py-0.5 text-[10px]"
+                style={{ borderColor: 'var(--border)', color: 'var(--subtle)', background: 'var(--surface-inner)' }}>
+                {delegationDataSource === 'keeper-db' ? t('keeperDb') : delegationDataSource === 'memory-fallback' ? t('memoryFallback') : t('unknown')}
               </span>
             </div>
+            <span className="text-xs" style={{ color: 'var(--subtle)' }}>{t('pauseRevoke')}</span>
           </div>
 
-          {configErrorMessage ? (
-            <p className="text-sm text-rose-300 bg-rose-950/30 border border-rose-800/60 rounded-lg px-3 py-2">
-              {configErrorMessage}
-            </p>
-          ) : null}
+          <div className="p-6 space-y-4">
+            {/* Alert banners */}
+            {configErrorMessage ? (
+              <div className="flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'rgba(235,87,87,0.30)', background: 'var(--danger-bg)', color: 'var(--danger)' }}>
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{configErrorMessage}</span>
+              </div>
+            ) : null}
+            {(keeperAddressSyncWarning || sessionKeyRegistrySyncWarning) ? (
+              <div className="flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'rgba(242,153,74,0.30)', background: 'var(--warning-bg)', color: 'var(--warning)' }}>
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{keeperAddressSyncWarning || sessionKeyRegistrySyncWarning}</span>
+              </div>
+            ) : null}
+            {feedbackMessage ? (
+              <div className="flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'rgba(172,198,233,0.25)', background: 'rgba(172,198,233,0.07)', color: 'var(--accent)' }}>
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{feedbackMessage}</span>
+              </div>
+            ) : null}
 
-          {keeperAddressSyncWarning ? (
-            <p className="text-sm text-amber-200 bg-amber-950/30 border border-amber-800/60 rounded-lg px-3 py-2">
-              {keeperAddressSyncWarning}
-            </p>
-          ) : null}
+            {/* Runtime routing (collapsed, subtle) */}
+            <details className="group">
+              <summary className="flex cursor-pointer items-center gap-1.5 text-[11px] select-none list-none" style={{ color: 'var(--subtle)' }}>
+                <RotateCcw className="h-3 w-3" />
+                <span className="uppercase tracking-wider font-mono">{t('runtimeRouting')}</span>
+                <span className="ml-auto text-[10px] group-open:hidden">▸</span>
+                <span className="ml-auto text-[10px] hidden group-open:inline">▾</span>
+              </summary>
+              <div className="mt-2 rounded-xl border px-3 py-2.5 space-y-1 text-xs font-mono" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--muted)' }}>
+                <div>{t('sessionKeyInUse')}:{' '}
+                  <a href={`https://testnet.arcscan.app/address/${runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}`}
+                    target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 hover:underline break-all" style={{ color: 'var(--accent)' }}>
+                    {(runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry).slice(0, 16)}…
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
+                </div>
+                <div style={{ color: 'var(--subtle)' }}>{t('source')}: {runtimeSessionKeyRegistryAddress ? t('runtimeResolution') : t('configFallback')}</div>
+              </div>
+            </details>
 
-          <div className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 space-y-1">
-            <div className="uppercase tracking-wider text-[11px] text-slate-400">{t('runtimeRouting')}</div>
-            <div>
-              {t('sessionKeyInUse')}:{' '}
-              <a
-                href={`https://testnet.arcscan.app/address/${runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-blue-400 hover:underline break-all"
-              >
-                {runtimeSessionKeyRegistryAddress || CONTRACT_ADDRESSES.sessionKeyRegistry}
-              </a>
-            </div>
-            <div className="text-[11px] text-slate-500">
-              {t('source')}:{' '}
-              {runtimeSessionKeyRegistryAddress
-                ? t('runtimeResolution')
-                : t('configFallback')}
-            </div>
-          </div>
-
-          {sessionKeyRegistrySyncWarning ? (
-            <p className="text-sm text-amber-200 bg-amber-950/30 border border-amber-800/60 rounded-lg px-3 py-2">
-              {sessionKeyRegistrySyncWarning}
-            </p>
-          ) : null}
-
-          {feedbackMessage ? (
-            <p className="text-sm text-blue-300 bg-blue-950/30 border border-blue-800/60 rounded-lg px-3 py-2">
-              {feedbackMessage}
-            </p>
-          ) : null}
-
-          {Object.keys(activeRecipes).length > 0 ? (
-            <div className="rounded-xl border border-blue-800/60 bg-blue-950/20 p-4 space-y-2">
-              <div className="text-xs uppercase tracking-wider text-blue-300">{t('sessionQuotaSummaryTitle')}</div>
-              <p className="text-[11px] text-slate-400">{t('sessionQuotaSharedNotice')}</p>
-              {sessionSpendQuota ? (
+            {/* Session quota (only when recipes active) */}
+            {Object.keys(activeRecipes).length > 0 && sessionSpendQuota ? (
+              <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'rgba(172,198,233,0.20)', background: 'rgba(172,198,233,0.05)' }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>{t('sessionQuotaSummaryTitle')}</span>
+                  <span className="text-[11px]" style={{ color: 'var(--subtle)' }}>{t('sessionQuotaSharedNotice')}</span>
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div>
-                    <div className="text-[11px] text-slate-500">{t('sessionQuotaLimit')}</div>
-                    <div className="font-mono text-sm text-slate-100">{sessionSpendQuota.maxUsdcSpendLimit} USDC</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-500">{t('sessionQuotaSpent')}</div>
-                    <div className="font-mono text-sm text-amber-300">{sessionSpendQuota.currentUsdcSpent} USDC</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-500">{t('sessionQuotaRemaining')}</div>
-                    <div className="font-mono text-sm text-emerald-300">{sessionSpendQuota.remainingUsdcSpendLimit} USDC</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-500">{t('sessionQuotaValidUntil')}</div>
-                    <div className="font-mono text-sm text-slate-100">
-                      {sessionSpendQuota.validUntil ? new Date(sessionSpendQuota.validUntil).toLocaleString(locale) : t('notAvailable')}
+                  {[
+                    { label: t('sessionQuotaLimit'), value: `${sessionSpendQuota.maxUsdcSpendLimit} USDC`, color: 'var(--ink)' },
+                    { label: t('sessionQuotaSpent'), value: `${sessionSpendQuota.currentUsdcSpent} USDC`, color: 'var(--warning)' },
+                    { label: t('sessionQuotaRemaining'), value: `${sessionSpendQuota.remainingUsdcSpendLimit} USDC`, color: 'var(--success)' },
+                    { label: t('sessionQuotaValidUntil'), value: sessionSpendQuota.validUntil ? new Date(sessionSpendQuota.validUntil).toLocaleDateString(locale) : t('notAvailable'), color: 'var(--ink)' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="rounded-lg p-2.5" style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)' }}>
+                      <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--subtle)' }}>{label}</div>
+                      <div className="mono text-xs font-semibold" style={{ color }}>{value}</div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ) : (
-                <p className="text-xs text-slate-500">{t('sessionQuotaUnavailable')}</p>
-              )}
-            </div>
-          ) : null}
+              </div>
+            ) : Object.keys(activeRecipes).length > 0 ? (
+              <div className="text-xs" style={{ color: 'var(--subtle)' }}>{t('sessionQuotaUnavailable')}</div>
+            ) : null}
 
-          <div className="space-y-3">
-            {RECIPES.map((recipe) => {
-              const lifecycle = activeRecipes[recipe.id];
-              const status = lifecycle?.status ?? 'inactive';
-              return (
-                <div
-                  key={recipe.id}
-                  className="border border-slate-800 bg-slate-900/60 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-                >
-                  <div className="space-y-1">
-                    <div className="text-white font-semibold">{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}</div>
-                    <div className="text-xs text-slate-400">
-                      {t('status')}: <span className="font-mono text-slate-200 uppercase">{status}</span>
+            {/* Recipe delegation cards */}
+            <div className="space-y-3">
+              {RECIPES.map((recipe) => {
+                const lifecycle = activeRecipes[recipe.id];
+                const status = lifecycle?.status ?? 'inactive';
+                const isPaused = status === 'paused';
+                const isRevoked = status === 'revoked';
+                const statusConfig = {
+                  active:   { dot: 'bg-success animate-pulse', text: 'text-success',  bg: 'rgba(111,207,151,0.08)',  border: 'rgba(111,207,151,0.20)' },
+                  paused:   { dot: 'bg-warning',               text: 'text-warning',  bg: 'rgba(242,153,74,0.08)',   border: 'rgba(242,153,74,0.20)' },
+                  revoked:  { dot: 'bg-danger',                text: 'text-danger',   bg: 'rgba(235,87,87,0.06)',    border: 'rgba(235,87,87,0.15)' },
+                  inactive: { dot: 'bg-subtle',                text: 'text-muted',    bg: 'var(--surface-inner)',    border: 'var(--border)' },
+                }[status] ?? { dot: 'bg-subtle', text: 'text-muted', bg: 'var(--surface-inner)', border: 'var(--border)' };
+                const isDisabled = !lifecycle || isRevoked || isUpdatingDelegation || isActivating || !keeperSessionKeyAddress;
+
+                return (
+                  <div key={recipe.id} className="rounded-xl p-4" style={{ background: statusConfig.bg, border: `1px solid ${statusConfig.border}` }}>
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                      {/* Left: info */}
+                      <div className="min-w-0 space-y-2">
+                        {/* Name + status badge */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm" style={{ color: 'var(--ink)' }}>
+                            {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}
+                          </span>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusConfig.text}`}
+                            style={{ borderColor: statusConfig.border, background: 'transparent' }}>
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${statusConfig.dot}`} />
+                            {status.toUpperCase()}
+                          </span>
+                          {lifecycle?.txLifecycleStatus && lifecycle.txLifecycleStatus !== 'idle' && (
+                            <span className="mono rounded border px-1.5 py-0.5 text-[10px]" style={{ borderColor: 'var(--border)', color: 'var(--subtle)', background: 'var(--surface-inner)' }}>
+                              {lifecycle.txLifecycleStatus.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Meta row */}
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono" style={{ color: 'var(--muted)' }}>
+                          {lifecycle && (
+                            <span className="flex items-center gap-1">
+                              <Clock3 className="h-3 w-3" />
+                              {t('expires')}: {new Date(lifecycle.validUntil).toLocaleDateString(locale)}
+                            </span>
+                          )}
+                          {lifecycle?.checkIntervalHours && (
+                            <span>
+                              ↻ {lifecycle.checkIntervalHours}h{lifecycle.intervalPreset ? ` (${lifecycle.intervalPreset})` : ''}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Tx hash */}
+                        {lifecycle?.txHash && (
+                          <a href={`https://testnet.arcscan.app/tx/${lifecycle.txHash}`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-mono hover:underline"
+                            style={{ color: 'var(--accent)' }}>
+                            {lifecycle.txHash.slice(0, 14)}…{lifecycle.txHash.slice(-6)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                        {lifecycle && !lifecycle.txHash && (
+                          <span className="text-[11px]" style={{ color: 'var(--success)' }}>{t('restoredWithoutTx')}</span>
+                        )}
+                        {!lifecycle && (
+                          <span className="text-[11px]" style={{ color: 'var(--subtle)' }}>{t('sessionQuotaPerRecipeHint')}</span>
+                        )}
+                      </div>
+
+                      {/* Right: action buttons */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={async () => { await handlePauseRecipe(recipe.id); }}
+                          disabled={isDisabled}
+                          title={isPaused ? t('resume') : t('pause')}
+                          className="flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{
+                            borderColor: isPaused ? 'rgba(111,207,151,0.35)' : 'rgba(242,153,74,0.35)',
+                            background: isPaused ? 'rgba(111,207,151,0.08)' : 'rgba(242,153,74,0.08)',
+                            color: isPaused ? 'var(--success)' : 'var(--warning)',
+                          }}
+                        >
+                          {isUpdatingDelegation ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : isPaused ? (
+                            <><Play className="h-3.5 w-3.5" />{t('resume')}</>
+                          ) : (
+                            <><Pause className="h-3.5 w-3.5" />{t('pause')}</>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => { await handleRevokeRecipe(recipe.id); }}
+                          disabled={isDisabled}
+                          title={t('revoke')}
+                          className="flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{ borderColor: 'rgba(235,87,87,0.35)', background: 'rgba(235,87,87,0.08)', color: 'var(--danger)' }}
+                        >
+                          {isUpdatingDelegation ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <><Trash2 className="h-3.5 w-3.5" />{t('revoke')}</>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    {lifecycle ? (
-                      <div className="text-xs text-slate-400">
-                        {t('txLifecycle')}: <span className="font-mono text-slate-200 uppercase">{lifecycle.txLifecycleStatus}</span>
-                      </div>
-                    ) : null}
-                    {lifecycle ? (
-                      <div className="text-xs text-slate-400">
-                        {t('expires')}: <span className="font-mono text-slate-200">{new Date(lifecycle.validUntil).toLocaleString(locale)}</span>
-                      </div>
-                    ) : null}
-                    {lifecycle?.checkIntervalHours ? (
-                      <div className="text-xs text-slate-400">
-                        Interval Hours: <span className="font-mono text-slate-200">{lifecycle.checkIntervalHours}</span>
-                        {lifecycle.intervalPreset ? ` (${lifecycle.intervalPreset})` : ''}
-                      </div>
-                    ) : null}
-                    {lifecycle ? (
-                      <div className="text-[11px] text-slate-500 italic">
-                        {t('sessionQuotaPerRecipeHint')}
-                      </div>
-                    ) : null}
-                    {lifecycle?.txHash ? (
-                      <a
-                        href={`https://testnet.arcscan.app/tx/${lifecycle.txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-400 hover:underline break-all"
-                      >
-                        {lifecycle.txHash}
-                      </a>
-                    ) : null}
-                    {lifecycle && !lifecycle.txHash ? (
-                      <div className="text-xs text-emerald-300">
-                        {t('restoredWithoutTx')}
-                      </div>
-                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await handlePauseRecipe(recipe.id);
-                      }}
-                      disabled={!lifecycle || status === 'revoked' || isUpdatingDelegation || isActivating || !keeperSessionKeyAddress}
-                      className="px-3 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-white"
-                    >
-                      {isUpdatingDelegation ? t('submitting') : status === 'paused' ? t('resume') : t('pause')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await handleRevokeRecipe(recipe.id);
-                      }}
-                      disabled={!lifecycle || status === 'revoked' || isUpdatingDelegation || isActivating || !keeperSessionKeyAddress}
-                      className="px-3 py-1.5 rounded-lg bg-rose-700/80 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-white"
-                    >
-                      {isUpdatingDelegation ? t('submitting') : t('revoke')}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </section>
 
@@ -1541,7 +1568,7 @@ export default function Home() {
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-[#081827]/95 px-4 py-2 text-sm text-[#dfeaf8] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:px-5">
         <span className="flex items-center gap-2 text-[#edf4ff]">
-          <LogoBrand variant="compact" size="sm" />
+          <span className="display text-xs font-semibold tracking-tight" style={{ color: 'var(--accent)' }}>DeFi Recipes</span>
           <span className="text-[#8fa3bf] text-xs">© 2026</span>
         </span>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">

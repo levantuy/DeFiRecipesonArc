@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Wallet, ArrowUpRight, History, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Wallet, ArrowUpRight, History, CheckCircle, Clock, AlertTriangle, ExternalLink, ChevronLeft, ChevronRight, RefreshCw, Code2 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { formatUnits } from 'viem';
 import { useAccount, useBalance } from 'wagmi';
@@ -405,52 +405,41 @@ const PortfolioTrackerContent: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Deployed Smart Contracts Card Banner */}
-      <div className="glass-card p-5 border-l-4 border-l-blue-500 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-mono font-bold uppercase tracking-wider text-blue-400">
-            Arc Testnet Deployed Contracts (Chain ID 5042002)
-          </span>
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
-            Live on Arc
-          </span>
+      {/* Deployed Contracts — collapsible detail */}
+      <details className="group glass-card overflow-hidden">
+        <summary className="flex cursor-pointer select-none list-none items-center justify-between px-5 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: 'rgba(172,198,233,0.10)' }}>
+              <Code2 className="h-3.5 w-3.5" style={{ color: 'var(--accent)' }} />
+            </div>
+            <span className="mono text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+              Arc Testnet Contracts
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+              style={{ borderColor: 'rgba(111,207,151,0.25)', background: 'rgba(111,207,151,0.08)', color: 'var(--success)' }}>
+              <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+              Live
+            </span>
+          </div>
+          <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" style={{ color: 'var(--subtle)' }} />
+        </summary>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t px-5 py-4" style={{ borderColor: 'var(--border)' }}>
+          {[
+            { label: t('sessionKeyRegistryLabel'), addr: CONTRACT_ADDRESSES.sessionKeyRegistry },
+            { label: t('recipeGuardrailLabel'),    addr: CONTRACT_ADDRESSES.recipeGuardrail },
+            { label: t('sharedExecutorProxyLabel'), addr: CONTRACT_ADDRESSES.sharedExecutorProxy },
+          ].map(({ label, addr }) => (
+            <div key={addr} className="rounded-xl p-3 space-y-1" style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)' }}>
+              <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--subtle)' }}>{label}</div>
+              <a href={`https://testnet.arcscan.app/address/${addr}`} target="_blank" rel="noopener noreferrer"
+                className="mono flex items-center gap-1 text-[11px] hover:underline" style={{ color: 'var(--accent)' }}>
+                <span className="truncate">{addr.slice(0, 18)}…{addr.slice(-4)}</span>
+                <ExternalLink className="h-3 w-3 shrink-0" />
+              </a>
+            </div>
+          ))}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
-          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">{t('sessionKeyRegistryLabel')}</div>
-            <a
-              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sessionKeyRegistry}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:underline truncate block mt-0.5"
-            >
-              {CONTRACT_ADDRESSES.sessionKeyRegistry}
-            </a>
-          </div>
-          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">{t('recipeGuardrailLabel')}</div>
-            <a
-              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.recipeGuardrail}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:underline truncate block mt-0.5"
-            >
-              {CONTRACT_ADDRESSES.recipeGuardrail}
-            </a>
-          </div>
-          <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
-            <div className="text-slate-400 text-[10px]">{t('sharedExecutorProxyLabel')}</div>
-            <a
-              href={`https://testnet.arcscan.app/address/${CONTRACT_ADDRESSES.sharedExecutorProxy}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:underline truncate block mt-0.5"
-            >
-              {CONTRACT_ADDRESSES.sharedExecutorProxy}
-            </a>
-          </div>
-        </div>
-      </div>
+      </details>
 
       {/* Portfolio Header Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -497,45 +486,55 @@ const PortfolioTrackerContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Execution Audit Log Table */}
-      <div className="glass-card p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-white flex items-center space-x-2">
-            <History className="h-5 w-5 text-blue-400" />
-            <span>{t('auditLogs')}</span>
-          </h3>
+      {/* Execution Audit Log */}
+      <div className="glass-card overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: 'rgba(172,198,233,0.10)' }}>
+              <History className="h-3.5 w-3.5" style={{ color: 'var(--accent)' }} />
+            </div>
+            <h3 className="display text-base font-semibold text-ink">{t('auditLogs')}</h3>
+            {totalCount > 0 && (
+              <span className="mono rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+                style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--muted)' }}>
+                {totalCount}
+              </span>
+            )}
+          </div>
+          {/* Auto-refresh indicator */}
+          <div className="flex items-center gap-1.5 text-[10px] font-mono" style={{ color: 'var(--subtle)' }}>
+            <RefreshCw className="h-3 w-3 animate-spin" style={{ animationDuration: '3s' }} />
+            15s
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label htmlFor="audit-status-filter" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
+        {/* Filter + sort controls */}
+        <div className="flex flex-wrap gap-3 px-5 py-3 border-b" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)' }}>
+          <div className="flex items-center gap-2">
+            <label htmlFor="audit-status-filter" className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--subtle)' }}>
               {t('statusFilter')}
             </label>
-            <select
-              id="audit-status-filter"
-              value={statusFilter}
+            <select id="audit-status-filter" value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-blue-500 focus:outline-none"
-            >
-              <option value="ALL">ALL</option>
-              <option value="CONFIRMED">CONFIRMED</option>
-              <option value="SUBMITTED">SUBMITTED</option>
-              <option value="SIMULATING">SIMULATING</option>
-              <option value="REVERTED">REVERTED</option>
-              <option value="SIMULATION_FAILED">SIMULATION_FAILED</option>
+              className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
+              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'dark' }}>
+              <option value="ALL">All</option>
+              <option value="CONFIRMED">Confirmed</option>
+              <option value="SUBMITTED">Submitted</option>
+              <option value="SIMULATING">Simulating</option>
+              <option value="REVERTED">Reverted</option>
+              <option value="SIMULATION_FAILED">Sim Failed</option>
             </select>
           </div>
-
-          <div>
-            <label htmlFor="audit-sort-mode" className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
+          <div className="flex items-center gap-2">
+            <label htmlFor="audit-sort-mode" className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--subtle)' }}>
               {t('sortMode')}
             </label>
-            <select
-              id="audit-sort-mode"
-              value={sortMode}
+            <select id="audit-sort-mode" value={sortMode}
               onChange={(event) => setSortMode(event.target.value as SortMode)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-blue-500 focus:outline-none"
-            >
+              className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
+              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'dark' }}>
               <option value="NEWEST">{t('newest')}</option>
               <option value="OLDEST">{t('oldest')}</option>
               <option value="STATUS">{t('statusPriority')}</option>
@@ -543,81 +542,90 @@ const PortfolioTrackerContent: React.FC = () => {
           </div>
         </div>
 
+        {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-300">
-            <thead className="bg-slate-900/60 text-xs uppercase font-mono text-slate-400 border-b border-slate-800">
+          <table className="w-full text-left text-sm" style={{ color: 'var(--ink-2)' }}>
+            <thead style={{ background: 'var(--surface-inner)', borderBottom: '1px solid var(--border)' }}>
               <tr>
-                <th className="px-4 py-3">{t('recipe')}</th>
-                <th className="px-4 py-3">{t('status')}</th>
-                <th className="px-4 py-3">{t('transactionHash')}</th>
-                <th className="px-4 py-3">{t('gasFee')}</th>
-                <th className="px-4 py-3">{t('timestamp')}</th>
+                {[t('recipe'), t('status'), t('transactionHash'), t('gasFee'), t('timestamp')].map((h) => (
+                  <th key={h} className="mono px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap"
+                    style={{ color: 'var(--subtle)' }}>{h}</th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {isLoadingLogs ? (
+            <tbody>
+              {isLoadingLogs && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
-                    {t('loadingLogs')}
+                  <td colSpan={5} className="px-5 py-8 text-center text-xs" style={{ color: 'var(--subtle)' }}>
+                    <div className="flex items-center justify-center gap-2">
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      {t('loadingLogs')}
+                    </div>
                   </td>
                 </tr>
-              ) : null}
-
-              {!isLoadingLogs && logsError ? (
+              )}
+              {!isLoadingLogs && logsError && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-4 text-xs text-rose-300">
-                    {logsError}
+                  <td colSpan={5} className="px-5 py-6 text-xs" style={{ color: 'var(--danger)' }}>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      {logsError}
+                    </div>
                   </td>
                 </tr>
-              ) : null}
-
-              {!isLoadingLogs && !logsError && auditLogs.length === 0 ? (
+              )}
+              {!isLoadingLogs && !logsError && auditLogs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
+                  <td colSpan={5} className="px-5 py-8 text-center text-xs" style={{ color: 'var(--subtle)' }}>
                     {address ? t('noLogs') : t('connectWalletBalance')}
                   </td>
                 </tr>
-              ) : null}
-
-              {!isLoadingLogs && !logsError && auditLogs.length > 0 && visibleLogs.length === 0 ? (
+              )}
+              {!isLoadingLogs && !logsError && auditLogs.length > 0 && visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-4 text-xs text-slate-400">
+                  <td colSpan={5} className="px-5 py-6 text-center text-xs" style={{ color: 'var(--subtle)' }}>
                     {t('noMatchingLogs')}
                   </td>
                 </tr>
-              ) : null}
-
-              {!isLoadingLogs && !logsError && visibleLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
-                  <td className="px-4 py-3 font-medium text-white">{log.recipeName}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${toStatusClasses(log.status)}`}>
-                      {log.status === 'CONFIRMED' ? (
-                        <CheckCircle className="h-3 w-3" />
-                      ) : (
-                        <AlertTriangle className="h-3 w-3" />
-                      )}
-                      <span>{log.status}</span>
+              )}
+              {!isLoadingLogs && !logsError && visibleLogs.map((log, i) => (
+                <tr key={log.id}
+                  className="transition-colors"
+                  style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-inner)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                >
+                  {/* Recipe name */}
+                  <td className="px-5 py-3.5 text-xs font-semibold whitespace-nowrap" style={{ color: 'var(--ink)' }}>
+                    {log.recipeName}
+                  </td>
+                  {/* Status badge */}
+                  <td className="px-5 py-3.5">
+                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${toStatusClasses(log.status)}`}>
+                      {log.status === 'CONFIRMED' ? <CheckCircle className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                      {log.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-blue-400 text-xs">
+                  {/* Tx hash */}
+                  <td className="px-5 py-3.5">
                     {log.txHash ? (
-                      <a
-                        href={`https://testnet.arcscan.app/tx/${log.txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        {`${log.txHash.slice(0, 10)}...${log.txHash.slice(-6)}`}
+                      <a href={`https://testnet.arcscan.app/tx/${log.txHash}`} target="_blank" rel="noopener noreferrer"
+                        className="mono inline-flex items-center gap-1 text-[11px] hover:underline" style={{ color: 'var(--accent)' }}>
+                        {log.txHash.slice(0, 10)}…{log.txHash.slice(-6)}
+                        <ExternalLink className="h-3 w-3" />
                       </a>
                     ) : (
-                      <span className="text-slate-500">{t('na')}</span>
+                      <span className="text-[11px]" style={{ color: 'var(--subtle)' }}>{t('na')}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">{formatGasUsedUsdc(log.gasUsedUsdc) || t('na')}</td>
-                  <td className="px-4 py-3 text-xs">
-                    <div className="text-slate-300 font-mono">{formatAbsoluteTimestamp(log.timestampIso, locale)}</div>
-                    <div className="text-slate-500">{toRelativeTimeClient(log.timestampMs, now)}</div>
+                  {/* Gas */}
+                  <td className="px-5 py-3.5 mono text-[11px]" style={{ color: 'var(--muted)' }}>
+                    {formatGasUsedUsdc(log.gasUsedUsdc) || <span style={{ color: 'var(--subtle)' }}>{t('na')}</span>}
+                  </td>
+                  {/* Timestamp */}
+                  <td className="px-5 py-3.5 text-[11px]">
+                    <div className="mono" style={{ color: 'var(--ink-2)' }}>{formatAbsoluteTimestamp(log.timestampIso, locale)}</div>
+                    <div style={{ color: 'var(--subtle)' }}>{toRelativeTimeClient(log.timestampMs, now)}</div>
                   </td>
                 </tr>
               ))}
@@ -625,27 +633,22 @@ const PortfolioTrackerContent: React.FC = () => {
           </table>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-800 pt-4">
-          <button
-            type="button"
-            onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
-            disabled={!canGoPrevious}
-            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:border-slate-500"
-          >
-            Previous
+        {/* Pagination */}
+        <div className="flex items-center justify-between border-t px-5 py-3" style={{ borderColor: 'var(--border)' }}>
+          <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={!canGoPrevious}
+            className="flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}>
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Prev
           </button>
-
-          <div className="text-xs text-slate-400 font-mono">
-            Page {page} / {totalPages}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
-            disabled={!canGoNext}
-            className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-medium text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:border-slate-500"
-          >
+          <span className="mono text-[11px]" style={{ color: 'var(--subtle)' }}>
+            {page} / {totalPages}
+          </span>
+          <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={!canGoNext}
+            className="flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}>
             Next
+            <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

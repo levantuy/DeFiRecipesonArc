@@ -381,29 +381,28 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
           exit={{ opacity: 0, scale: 0.95 }}
           className="glass-modal flex max-h-[calc(100dvh-2rem)] min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-blue-500/30 shadow-2xl"
         >
-          <div className="flex items-center justify-between border-b border-slate-700/60 px-6 py-4">
-            <div className="flex items-center space-x-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-              <h3 className="text-lg font-bold text-white">{t('modalTitle')}</h3>
+          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: 'rgba(111,207,151,0.12)' }}>
+                <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--success)' }} />
+              </div>
+              <div>
+                <h3 className="display text-sm font-semibold text-ink">{t('modalTitle')}</h3>
+                <p className="text-[11px]" style={{ color: 'var(--subtle)' }}>
+                  {recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}
+                </p>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isConfirming}
-              className="text-slate-400 transition-colors hover:text-white"
-            >
-              <X className="h-5 w-5" />
+            <button type="button" onClick={onClose} disabled={isConfirming}
+              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/5 disabled:opacity-40"
+              style={{ color: 'var(--muted)' }}>
+              <X className="h-4 w-4" />
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="space-y-4">
-                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('recipeName')}</div>
-                  <div className="mt-0.5 text-base font-semibold text-white">{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderName') : t('recipeDcaName')}</div>
-                </div>
-
                 {/* Swap Provider Selector — shown only for DCA recipe, right at the top */}
                 {isDcaRecipe && (
                   <div className="rounded-xl border border-blue-700/50 bg-blue-950/30 p-4 space-y-3">
@@ -591,35 +590,25 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       <div className="mt-2 rounded-lg border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200">
                         {t('allowancePolicy')} SharedExecutorProxy {SHARED_EXECUTOR_PROXY_SPENDER}.
                       </div>
-                      <div className="mt-2 rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-200 space-y-2">
+                      {/* Allowance precheck panel */}
+                      <div className="rounded-xl border p-3 space-y-2.5" style={{ borderColor: 'rgba(172,198,233,0.20)', background: 'rgba(172,198,233,0.04)' }}>
                         <div className="flex items-center justify-between">
-                          <span className="uppercase tracking-wider">{t('runtimeAllowancePrecheck')}</span>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await runAllowanceCheck();
-                            }}
+                          <span className="mono text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>{t('runtimeAllowancePrecheck')}</span>
+                          <button type="button"
+                            onClick={async () => { await runAllowanceCheck(); }}
                             disabled={isCheckingAllowance || !connectedAddress || Boolean(dcaValidationError)}
-                            className="rounded border border-cyan-700/70 px-2 py-0.5 text-[10px] text-cyan-200 disabled:opacity-50"
-                          >
+                            className="rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50"
+                            style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-inner)', color: 'var(--muted)' }}>
                             {isCheckingAllowance ? t('checking') : t('refresh')}
                           </button>
                         </div>
-                        {!connectedAddress ? (
-                          <div className="text-amber-200">{t('connectForAllowance')}</div>
-                        ) : null}
-                        {allowanceCheckError ? (
-                          <div className="text-rose-300">{allowanceCheckError}</div>
-                        ) : null}
-                        {allowanceCheck ? (
+                        {!connectedAddress && <div className="text-[11px]" style={{ color: 'var(--warning)' }}>{t('connectForAllowance')}</div>}
+                        {allowanceCheckError && <div className="text-[11px]" style={{ color: 'var(--danger)' }}>{allowanceCheckError}</div>}
+                        {allowanceCheck && (
                           <div className="space-y-2">
-                            <div className="text-[11px] text-cyan-300">{t('runtimeSpender')}: <span className="font-mono text-white break-all">{allowanceCheck.runtimeSpender}</span></div>
-                            <div className="text-[11px] text-cyan-300">{t('targetProtocol')}: <span className="font-mono text-white break-all">{allowanceCheck.targetProtocolAddress}</span></div>
-
-                            {/* Per-spender allowance rows with Approve buttons */}
                             {allowanceCheck.requiredSpenders && allowanceCheck.requiredSpenders.length > 0 ? (
-                              <div className="space-y-1.5 pt-1">
-                                <div className="text-[11px] font-semibold text-cyan-200 uppercase tracking-wider">{t('requiredApprovals')}</div>
+                              <div className="space-y-1.5">
+                                <div className="mono text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>{t('requiredApprovals')}</div>
                                 {allowanceCheck.requiredSpenders.map((spender) => {
                                   const current = BigInt(allowanceCheck.allowanceBySpender?.[spender.toLowerCase()] || '0');
                                   const required = BigInt(allowanceCheck.requiredForSchedulerBaseUnits || '0');
@@ -629,29 +618,29 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                                   const wasApproved = approvedSpenders.has(spender.toLowerCase());
                                   const displayCurrent = isUnlimited ? 'Unlimited' : `${formatUsdcBaseUnits(current.toString())} USDC`;
                                   return (
-                                    <div key={spender} className="flex items-center justify-between gap-2 rounded-lg border border-slate-700/60 bg-slate-900/60 px-2.5 py-1.5">
+                                    <div key={spender} className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2"
+                                      style={{ borderColor: isEnough || wasApproved ? 'rgba(111,207,151,0.20)' : 'rgba(242,153,74,0.20)', background: 'var(--surface-inner)' }}>
                                       <div className="min-w-0 flex-1">
-                                        <div className="truncate font-mono text-[10px] text-slate-400">{spender}</div>
-                                        <div className={`text-[11px] font-medium ${isEnough || wasApproved ? 'text-emerald-300' : 'text-amber-300'}`}>
+                                        <div className="mono truncate text-[10px]" style={{ color: 'var(--subtle)' }}>{spender.slice(0, 16)}…{spender.slice(-4)}</div>
+                                        <div className="mono text-[11px] font-semibold mt-0.5"
+                                          style={{ color: isEnough || wasApproved ? 'var(--success)' : 'var(--warning)' }}>
                                           {displayCurrent} / {formatUsdcBaseUnits(required.toString())} USDC
-                                          {(isEnough || wasApproved) ? ' ✓' : ' — needs approval'}
+                                          {(isEnough || wasApproved) ? ' ✓' : ''}
                                         </div>
                                       </div>
                                       {!isEnough && !wasApproved ? (
-                                        <button
-                                          type="button"
+                                        <button type="button"
                                           disabled={isThisApproving || isApproveConfirming}
                                           onClick={() => handleApprove(spender, required.toString())}
-                                          className="flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          {isThisApproving || (isApproveConfirming && approvingSpender === spender.toLowerCase()) ? (
-                                            <><Loader2 className="h-3 w-3 animate-spin" /> Approving…</>
-                                          ) : (
-                                            'Approve USDC'
-                                          )}
+                                          className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                          style={{ background: 'rgba(172,198,233,0.15)', border: '1px solid rgba(172,198,233,0.25)' }}>
+                                          {isThisApproving || (isApproveConfirming && approvingSpender === spender.toLowerCase())
+                                            ? <><Loader2 className="h-3 w-3 animate-spin" /> Approving…</>
+                                            : 'Approve USDC'}
                                         </button>
                                       ) : (
-                                        <span className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-900/50 px-2.5 py-1 text-[11px] text-emerald-300">
+                                        <span className="flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold"
+                                          style={{ borderColor: 'rgba(111,207,151,0.25)', background: 'rgba(111,207,151,0.08)', color: 'var(--success)' }}>
                                           <CheckCheck className="h-3 w-3" /> Approved
                                         </span>
                                       )}
@@ -660,102 +649,118 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                                 })}
                               </div>
                             ) : (
-                              <div className="text-[11px] text-cyan-300">{t('allowanceNow')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.currentAllowanceBaseUnits)} USDC</span></div>
+                              <div className="mono text-[11px]" style={{ color: 'var(--muted)' }}>{t('allowanceNow')}: <span style={{ color: 'var(--ink)' }}>{formatUsdcBaseUnits(allowanceCheck.currentAllowanceBaseUnits)} USDC</span></div>
                             )}
-
-                            <div className="pt-1 space-y-1">
-                              <div className="text-[11px] text-cyan-300">{t('requiredScheduler')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.requiredForSchedulerBaseUnits)} USDC</span></div>
-                              <div className="text-[11px] text-cyan-300">{t('requiredActivation')}: <span className="font-mono text-white">{formatUsdcBaseUnits(allowanceCheck.requiredForActivationBaseUnits)} USDC</span></div>
-                              <div className={`text-[11px] font-medium ${allowanceCheck.isEnoughForScheduler ? 'text-emerald-300' : 'text-amber-200'}`}>
-                                {t('schedulerReadiness')}: {allowanceCheck.isEnoughForScheduler ? '✅ ' + t('ready') : '⚠️ ' + t('notReady')}
-                              </div>
-                              <div className={`text-[11px] font-medium ${allowanceCheck.isEnoughForActivation ? 'text-emerald-300' : 'text-amber-200'}`}>
-                                {t('activationReadiness')}: {allowanceCheck.isEnoughForActivation ? '✅ ' + t('ready') : '⚠️ ' + t('willRequireApprove')}
-                              </div>
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              {[
+                                { label: t('schedulerReadiness'), ok: allowanceCheck.isEnoughForScheduler, okText: t('ready'), failText: t('notReady') },
+                                { label: t('activationReadiness'), ok: allowanceCheck.isEnoughForActivation, okText: t('ready'), failText: t('willRequireApprove') },
+                              ].map(({ label, ok, okText, failText }) => (
+                                <div key={label} className="rounded-lg border p-2" style={{ borderColor: ok ? 'rgba(111,207,151,0.20)' : 'rgba(242,153,74,0.20)', background: ok ? 'rgba(111,207,151,0.06)' : 'rgba(242,153,74,0.06)' }}>
+                                  <div className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--subtle)' }}>{label}</div>
+                                  <div className="mono text-[11px] font-semibold" style={{ color: ok ? 'var(--success)' : 'var(--warning)' }}>
+                                    {ok ? `✓ ${okText}` : `⚠ ${failText}`}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
-                        ) : null}
+                        )}
                       </div>
                     </div>
                   ) : null}
                 </div>
               </div>
 
-              <div className="space-y-4">
-                {/* Session Key Required banner */}
+              <div className="space-y-3">
+                {/* Session Key status */}
                 {isDcaRecipe && connectedAddress && isSessionKeyValid === false ? (
-                  <div className="rounded-xl border border-violet-700/60 bg-violet-950/40 p-4 text-xs text-violet-200 space-y-3">
+                  <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(109,40,217,0.10)' }}>
                     <div className="flex items-center gap-2">
-                      <Key className="h-4 w-4 shrink-0 text-violet-400" />
-                      <span className="font-semibold uppercase tracking-wider text-violet-300">Keeper Authorization Required</span>
+                      <Key className="h-4 w-4 shrink-0" style={{ color: '#a78bfa' }} />
+                      <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#c4b5fd' }}>Keeper Authorization Required</span>
                     </div>
-                    <p className="leading-relaxed text-violet-200">
-                      Your wallet has not authorized the keeper to execute DCA on your behalf.
-                      You need to register a <span className="font-mono text-white">Session Key</span> on{' '}
-                      <span className="font-mono text-[10px] text-violet-300">SessionKeyRegistry</span> once — this is a one-time per-wallet action.
+                    <p className="text-xs leading-relaxed" style={{ color: '#ddd6fe' }}>
+                      Register a <span className="mono text-white">Session Key</span> once to authorize the keeper to execute DCA on your behalf.
                     </p>
-                    <div className="rounded-lg border border-violet-800/50 bg-violet-900/30 px-3 py-2 font-mono text-[10px] text-violet-300 space-y-1">
-                      <div>Keeper: <span className="text-white">{KEEPER_EOA}</span></div>
-                      <div>Valid for: <span className="text-white">{SESSION_KEY_DEFAULT_DAYS} days</span></div>
+                    <div className="rounded-lg border px-3 py-2 mono text-[10px] space-y-1" style={{ borderColor: 'rgba(167,139,250,0.20)', background: 'rgba(109,40,217,0.15)', color: '#c4b5fd' }}>
+                      <div>Keeper: <span className="text-white">{KEEPER_EOA.slice(0, 14)}…{KEEPER_EOA.slice(-6)}</span></div>
+                      <div>Valid: <span className="text-white">{SESSION_KEY_DEFAULT_DAYS} days</span></div>
                       <div>Max spend: <span className="text-white">{sessionSpendLimitUsdc || DEFAULT_SESSION_SPEND_LIMIT_USDC} USDC</span></div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={isRegisteringSessionKey || isSessionKeyConfirming}
+                    <button type="button" disabled={isRegisteringSessionKey || isSessionKeyConfirming}
                       onClick={handleRegisterSessionKey}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isRegisteringSessionKey || isSessionKeyConfirming ? (
-                        <><Loader2 className="h-4 w-4 animate-spin" /> Registering…</>
-                      ) : (
-                        <><Key className="h-4 w-4" /> Register Session Key</>
-                      )}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>
+                      {isRegisteringSessionKey || isSessionKeyConfirming
+                        ? <><Loader2 className="h-4 w-4 animate-spin" /> Registering…</>
+                        : <><Key className="h-4 w-4" /> Register Session Key</>}
                     </button>
                   </div>
                 ) : isDcaRecipe && connectedAddress && isSessionKeyValid === true ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-emerald-800/50 bg-emerald-950/30 px-4 py-2.5 text-xs text-emerald-300">
+                  <div className="flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs" style={{ borderColor: 'rgba(111,207,151,0.25)', background: 'rgba(111,207,151,0.08)', color: 'var(--success)' }}>
                     <CheckCheck className="h-4 w-4 shrink-0" />
-                    <span>Keeper session key active — DCA execution authorized</span>
+                    <span>Session key active — execution authorized</span>
                   </div>
                 ) : null}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('quickSummary')}</div>
-                  <div className="mt-3 space-y-3">
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                      <div className="text-xs text-slate-400">{t('estimatedKeeperGas')}</div>
-                      <div className="mt-1 font-mono font-bold text-blue-400">~{recipe.estimatedGasUsdc} USDC</div>
+                {/* Quick summary stats */}
+                <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)' }}>
+                  <div className="mono text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--subtle)' }}>{t('quickSummary')}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'rgba(172,198,233,0.05)' }}>
+                      <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--subtle)' }}>{t('estimatedKeeperGas')}</div>
+                      <div className="mono font-bold text-sm" style={{ color: 'var(--accent)' }}>~{recipe.estimatedGasUsdc}</div>
+                      <div className="mono text-[10px]" style={{ color: 'var(--subtle)' }}>USDC / run</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                      <div className="text-xs text-slate-400">{t('expectedNetYield')}</div>
-                      <div className="mt-1 font-mono font-bold text-emerald-400">{recipe.expectedNetApy}</div>
+                    <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'rgba(111,207,151,0.05)' }}>
+                      <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--subtle)' }}>{t('expectedNetYield')}</div>
+                      <div className="mono font-bold text-sm" style={{ color: 'var(--success)' }}>{recipe.expectedNetApy}</div>
+                      <div className="mono text-[10px]" style={{ color: 'var(--subtle)' }}>estimated</div>
                     </div>
                   </div>
+                  {isDcaRecipe && estimatedRuns > 0n && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)' }}>
+                        <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--subtle)' }}>{t('estimatedRuns')}</div>
+                        <div className="mono font-bold text-sm" style={{ color: 'var(--ink)' }}>{estimatedRuns.toString()}</div>
+                        <div className="mono text-[10px]" style={{ color: 'var(--subtle)' }}>executions</div>
+                      </div>
+                      <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)' }}>
+                        <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--subtle)' }}>Duration</div>
+                        <div className="mono font-bold text-sm" style={{ color: 'var(--ink)' }}>
+                          {Math.round((Number(estimatedRuns) - 1) * Number(intervalHours || 0) / 24)}d
+                        </div>
+                        <div className="mono text-[10px]" style={{ color: 'var(--subtle)' }}>
+                          {(Number(estimatedRuns) - 1) * Number(intervalHours || 0)}h total
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-start space-x-2.5 rounded-xl border border-amber-800/60 bg-amber-950/40 p-3 text-xs text-amber-200">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                {/* Risk warning */}
+                <div className="flex items-start gap-2.5 rounded-xl border p-3 text-xs" style={{ borderColor: 'rgba(242,153,74,0.25)', background: 'var(--warning-bg)', color: 'var(--warning)' }}>
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{recipe.recipeType === 'AUTO_COMPOUNDER' ? t('recipeAutoCompounderRisk') : t('recipeDcaRisk')}</span>
                 </div>
 
-                {isDcaRecipe ? (
-                  <div className="rounded-xl border border-blue-800/60 bg-blue-950/30 p-3 text-xs text-blue-200">
-                    <div className="text-[11px] uppercase tracking-wider text-blue-300">{t('dcaConfirmation')}</div>
-                    <div className="mt-2 leading-relaxed">
-                      {t('dcaAuthorization')} <span className="font-mono text-white">{totalDcaBudgetUsdc || '0'} USDC</span> for this recurring DCA strategy.
-                      {t('eachExecutionUses')} <span className="font-mono text-white">{perExecutionUsdc || '0'} USDC</span> {t('inMode')} <span className="font-mono text-white">PULL_PER_RUN</span>.
-                    </div>
-                    <div className="mt-2 text-[11px] text-blue-300">
-                      {t('dcaRisks')}
-                    </div>
+                {/* DCA confirmation */}
+                {isDcaRecipe && (
+                  <div className="rounded-xl border p-3 text-xs space-y-1.5" style={{ borderColor: 'rgba(172,198,233,0.20)', background: 'rgba(172,198,233,0.05)', color: 'var(--ink-2)' }}>
+                    <div className="mono text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>{t('dcaConfirmation')}</div>
+                    <p className="leading-relaxed">
+                      {t('dcaAuthorization')} <span className="mono text-white">{totalDcaBudgetUsdc || '0'} USDC</span> total.
+                      {' '}{t('eachExecutionUses')} <span className="mono text-white">{perExecutionUsdc || '0'} USDC</span>.
+                    </p>
+                    <p className="text-[11px]" style={{ color: 'var(--muted)' }}>{t('dcaRisks')}</p>
                   </div>
-                ) : null}
+                )}
 
-                <div className="flex items-start space-x-2.5 rounded-xl border border-emerald-800/60 bg-emerald-950/40 p-3 text-xs text-emerald-300">
-                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                  <span>
-                    {t('oneClickFlow')}
-                  </span>
+                {/* Non-custodial guarantee */}
+                <div className="flex items-start gap-2.5 rounded-xl border p-3 text-xs" style={{ borderColor: 'rgba(111,207,151,0.25)', background: 'rgba(111,207,151,0.05)', color: 'var(--success)' }}>
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{t('oneClickFlow')}</span>
                 </div>
               </div>
             </div>
