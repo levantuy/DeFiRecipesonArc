@@ -1316,15 +1316,15 @@ export default function Home() {
               <span>{t('heroBadge')}</span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight" style={{ color: 'var(--ink)' }}>
               {t('heroTitle')} <span className="gradient-text">{t('heroTitleAccent')}</span>
             </h1>
 
-            <p className="text-slate-300 text-base leading-relaxed">
+            <p className="text-base leading-relaxed" style={{ color: 'var(--ink-2)' }}>
               {t('heroDescription')}
             </p>
 
-            <div className="flex flex-wrap gap-4 pt-2 text-xs font-mono text-slate-400">
+            <div className="flex flex-wrap gap-4 pt-2 text-xs font-mono" style={{ color: 'var(--muted)' }}>
               <div className="flex items-center space-x-1.5">
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
                 <span>{t('heroProxy')}</span>

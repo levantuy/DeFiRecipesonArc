@@ -394,7 +394,9 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
               </div>
             </div>
             <button type="button" onClick={onClose} disabled={isConfirming}
-              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/5 disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:opacity-40"
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; }}
               style={{ color: 'var(--muted)' }}>
               <X className="h-4 w-4" />
             </button>
@@ -447,11 +449,11 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   </div>
                 )}
 
-                <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
-                  <div className="mb-2 text-xs uppercase tracking-wider font-mono text-slate-400">{t('routingAssetFlow')}</div>
+                <div className="space-y-2 rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)' }}>
+                  <div className="mb-2 text-xs uppercase tracking-wider font-mono" style={{ color: 'var(--muted)' }}>{t('routingAssetFlow')}</div>
                   <div className="space-y-2">
                     {(recipe.recipeType === 'AUTO_COMPOUNDER' ? dictionary.recipeAutoCompounderSteps : dictionary.recipeDcaSteps).map((step, index) => (
-                      <div key={`${recipe.id}-${index}`} className="flex items-center gap-2 text-sm text-slate-200">
+                      <div key={`${recipe.id}-${index}`} className="flex items-center gap-2 text-sm" style={{ color: 'var(--ink-2)' }}>
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-blue-700 bg-blue-900/40 text-[10px] font-bold text-blue-300">
                           {index + 1}
                         </span>
@@ -459,25 +461,25 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       </div>
                     ))}
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--ink-2)' }}>
                     <span>{t('userWallet')}</span>
                     <ArrowRight className="h-4 w-4 text-emerald-400" />
                     <span>SharedExecutorProxy</span>
                     <ArrowRight className="h-4 w-4 text-emerald-400" />
                     <div className="max-w-[40%] truncate">{recipe.targetProtocol}</div>
                   </div>
-                  <div className="mt-1 break-all text-[11px] font-mono text-slate-500">
+                  <div className="mt-1 break-all text-[11px] font-mono" style={{ color: 'var(--subtle)' }}>
                     {t('targetProtocol')}: {recipe.targetProtocolAddress || t('routeResolved')}
                   </div>
-                  <div className="mt-1 break-all text-[11px] font-mono text-slate-500">
+                  <div className="mt-1 break-all text-[11px] font-mono" style={{ color: 'var(--subtle)' }}>
                     {t('swapProvider')}: {isDcaRecipe ? selectedSwapProvider : (recipe.swapProvider || t('na'))}
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
-                  <div className="text-xs uppercase tracking-wider font-mono text-slate-400">{t('parametersProtection')}</div>
+                <div className="space-y-3 rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)' }}>
+                  <div className="text-xs uppercase tracking-wider font-mono" style={{ color: 'var(--muted)' }}>{t('parametersProtection')}</div>
                   <div>
-                    <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                    <div className="mb-1 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
                       <span>{t('maxSlippage')}</span>
                       <span className="font-mono text-emerald-400">{(maxSlippageBps / 100).toFixed(2)}%</span>
                     </div>
@@ -492,7 +494,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     />
                   </div>
                   <div>
-                    <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                    <div className="mb-1 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
                       <span>{t('sessionSpendLimitLabel')}</span>
                     </div>
                     <input
@@ -501,9 +503,9 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       value={sessionSpendLimitUsdc}
                       onChange={(event) => setSessionSpendLimitUsdc(event.target.value)}
                       placeholder={t('sessionSpendLimitPlaceholder')}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                      className="surface-input w-full px-3 py-2 text-sm"
                     />
-                    <div className="mt-1 text-[11px] text-slate-500">{t('sessionSpendLimitHint')}</div>
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--subtle)' }}>{t('sessionSpendLimitHint')}</div>
                     {sessionSpendLimitValidationError ? (
                       <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">
                         {sessionSpendLimitValidationError}
@@ -511,7 +513,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                     ) : null}
                   </div>
                   <div>
-                    <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                    <div className="mb-1 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
                       <span>Interval Hours</span>
                       <span className="font-mono text-emerald-400">{intervalHours || 'Not set'}</span>
                     </div>
@@ -524,7 +526,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                         setIntervalHours(event.target.value);
                       }}
                       placeholder="Enter interval in hours"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                      className="surface-input w-full px-3 py-2 text-sm"
                     />
                     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {([
@@ -540,18 +542,23 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                             setIntervalPreset(preset);
                             if (preset !== 'CUSTOM') setIntervalHours(value);
                           }}
-                          className={`rounded-lg border px-2 py-1.5 text-xs ${intervalPreset === preset ? 'border-blue-400 bg-blue-950/60 text-blue-200' : 'border-slate-700 text-slate-400'}`}
+                          className="rounded-lg border px-2 py-1.5 text-xs transition-colors"
+                          style={{
+                            borderColor: intervalPreset === preset ? 'var(--accent)' : 'var(--border)',
+                            background: intervalPreset === preset ? 'rgba(var(--accent-rgb),0.10)' : 'transparent',
+                            color: intervalPreset === preset ? 'var(--ink)' : 'var(--muted)',
+                          }}
                         >
                           {label}
                         </button>
                       ))}
                     </div>
-                    <div className="mt-1 text-[11px] text-slate-500">Use a whole number from 1 to 720 hours.</div>
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--subtle)' }}>Use a whole number from 1 to 720 hours.</div>
                     {intervalValidationError ? <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">{intervalValidationError}</div> : null}
                   </div>
                   {isDcaRecipe ? (
                     <div>
-                      <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
+                      <div className="mb-1 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
                         <span>{t('totalDcaBudget')}</span>
                         <span className="font-mono text-emerald-400">{t('totalAllocation')}</span>
                       </div>
@@ -560,9 +567,9 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                         value={totalDcaBudgetUsdc}
                         onChange={(event) => setTotalDcaBudgetUsdc(event.target.value)}
                         placeholder={t('totalPlaceholder')}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                        className="surface-input w-full px-3 py-2 text-sm"
                       />
-                      <div className="mt-3 mb-1 flex items-center justify-between text-xs text-slate-400">
+                      <div className="mt-3 mb-1 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
                         <span>{t('perExecution')}</span>
                         <span className="font-mono text-emerald-400">{t('eachScheduledRun')}</span>
                       </div>
@@ -571,23 +578,23 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                         value={perExecutionUsdc}
                         onChange={(event) => setPerExecutionUsdc(event.target.value)}
                         placeholder={t('perExecutionPlaceholder')}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                        className="surface-input w-full px-3 py-2 text-sm"
                       />
-                      <div className="mt-2 text-[11px] text-slate-500">
+                      <div className="mt-2 text-[11px]" style={{ color: 'var(--subtle)' }}>
                         {t('dcaValidationHint')}
                       </div>
-                      <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
+                      <div className="mt-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}>
                         {t('estimatedRuns')}: <span className="font-mono text-emerald-400">{estimatedRuns.toString()}</span>
                         <div>Estimated total duration: <span className="font-mono text-emerald-400">{estimatedRuns > 0n ? (Number(estimatedRuns) - 1) * Number(intervalHours || 0) : 0} hours</span></div>
                       </div>
-                      {sessionQuotaError ? <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">{sessionQuotaError}</div> : null}
-                      {estimatedRuns > 0n && (Number(estimatedRuns) - 1) * Number(intervalHours || 0) > 30 * 24 * 0.9 ? <div className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-[11px] text-amber-200">The session key may expire before the DCA completes. The session key will not be renewed automatically.</div> : null}
+                      {sessionQuotaError ? <div className="mt-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'rgba(235,87,87,0.30)', background: 'var(--danger-bg)', color: 'var(--danger)' }}>{sessionQuotaError}</div> : null}
+                      {estimatedRuns > 0n && (Number(estimatedRuns) - 1) * Number(intervalHours || 0) > 30 * 24 * 0.9 ? <div className="mt-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'rgba(242,153,74,0.30)', background: 'var(--warning-bg)', color: 'var(--warning)' }}>The session key may expire before the DCA completes. The session key will not be renewed automatically.</div> : null}
                       {dcaValidationError ? (
-                        <div className="mt-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-300">
+                        <div className="mt-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'rgba(235,87,87,0.30)', background: 'var(--danger-bg)', color: 'var(--danger)' }}>
                           {dcaValidationError}
                         </div>
                       ) : null}
-                      <div className="mt-2 rounded-lg border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200">
+                      <div className="mt-2 rounded-lg border px-3 py-2 text-[11px]" style={{ borderColor: 'rgba(var(--accent-rgb),0.20)', background: 'rgba(var(--accent-rgb),0.06)', color: 'var(--ink-2)' }}>
                         {t('allowancePolicy')} SharedExecutorProxy {SHARED_EXECUTOR_PROXY_SPENDER}.
                       </div>
                       {/* Allowance precheck panel */}
@@ -632,8 +639,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                                         <button type="button"
                                           disabled={isThisApproving || isApproveConfirming}
                                           onClick={() => handleApprove(spender, required.toString())}
-                                          className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                                          style={{ background: 'rgba(172,198,233,0.15)', border: '1px solid rgba(172,198,233,0.25)' }}>
+                                          className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                                          style={{ color: 'var(--ink)', background: 'rgba(var(--accent-rgb),0.15)', border: '1px solid rgba(var(--accent-rgb),0.25)' }}>
                                           {isThisApproving || (isApproveConfirming && approvingSpender === spender.toLowerCase())
                                             ? <><Loader2 className="h-3 w-3 animate-spin" /> Approving…</>
                                             : 'Approve USDC'}
@@ -681,12 +688,12 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                       <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#c4b5fd' }}>Keeper Authorization Required</span>
                     </div>
                     <p className="text-xs leading-relaxed" style={{ color: '#ddd6fe' }}>
-                      Register a <span className="mono text-white">Session Key</span> once to authorize the keeper to execute DCA on your behalf.
+                      Register a <span className="mono" style={{ color: 'var(--ink)' }}>Session Key</span> once to authorize the keeper to execute DCA on your behalf.
                     </p>
                     <div className="rounded-lg border px-3 py-2 mono text-[10px] space-y-1" style={{ borderColor: 'rgba(167,139,250,0.20)', background: 'rgba(109,40,217,0.15)', color: '#c4b5fd' }}>
-                      <div>Keeper: <span className="text-white">{KEEPER_EOA.slice(0, 14)}…{KEEPER_EOA.slice(-6)}</span></div>
-                      <div>Valid: <span className="text-white">{SESSION_KEY_DEFAULT_DAYS} days</span></div>
-                      <div>Max spend: <span className="text-white">{sessionSpendLimitUsdc || DEFAULT_SESSION_SPEND_LIMIT_USDC} USDC</span></div>
+                      <div>Keeper: <span style={{ color: 'var(--ink)' }}>{KEEPER_EOA.slice(0, 14)}…{KEEPER_EOA.slice(-6)}</span></div>
+                      <div>Valid: <span style={{ color: 'var(--ink)' }}>{SESSION_KEY_DEFAULT_DAYS} days</span></div>
+                      <div>Max spend: <span style={{ color: 'var(--ink)' }}>{sessionSpendLimitUsdc || DEFAULT_SESSION_SPEND_LIMIT_USDC} USDC</span></div>
                     </div>
                     <button type="button" disabled={isRegisteringSessionKey || isSessionKeyConfirming}
                       onClick={handleRegisterSessionKey}
@@ -750,8 +757,8 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   <div className="rounded-xl border p-3 text-xs space-y-1.5" style={{ borderColor: 'rgba(172,198,233,0.20)', background: 'rgba(172,198,233,0.05)', color: 'var(--ink-2)' }}>
                     <div className="mono text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>{t('dcaConfirmation')}</div>
                     <p className="leading-relaxed">
-                      {t('dcaAuthorization')} <span className="mono text-white">{totalDcaBudgetUsdc || '0'} USDC</span> total.
-                      {' '}{t('eachExecutionUses')} <span className="mono text-white">{perExecutionUsdc || '0'} USDC</span>.
+                      {t('dcaAuthorization')} <span className="mono" style={{ color: 'var(--ink)' }}>{totalDcaBudgetUsdc || '0'} USDC</span> total.
+                      {' '}{t('eachExecutionUses')} <span className="mono" style={{ color: 'var(--ink)' }}>{perExecutionUsdc || '0'} USDC</span>.
                     </p>
                     <p className="text-[11px]" style={{ color: 'var(--muted)' }}>{t('dcaRisks')}</p>
                   </div>
@@ -766,7 +773,7 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
             </div>
           </div>
 
-          <div className="sticky bottom-0 border-t border-slate-700/60 bg-slate-950/80 px-6 py-4 backdrop-blur">
+          <div className="sticky bottom-0 border-t px-6 py-4 backdrop-blur" style={{ borderColor: 'var(--border)', background: 'var(--modal-bg)' }}>
             <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
@@ -775,7 +782,10 @@ export const SimulationModal: React.FC<SimulationModalProps> = ({
                   onClose();
                 }}
                 disabled={isConfirming}
-                className="pointer-events-auto rounded-xl px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
+                className="pointer-events-auto rounded-xl px-4 py-2 text-sm transition-colors"
+                style={{ color: 'var(--ink-2)' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; }}
               >
                 {t('cancel')}
               </button>

@@ -664,7 +664,7 @@ export const PortfolioTracker: React.FC = () => {
       fallback={
         <div className="space-y-6">
           <div className="glass-card p-6">
-            <p className="text-sm text-slate-400">{t('loadingPortfolio')}</p>
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>{t('loadingPortfolio')}</p>
           </div>
         </div>
       }

@@ -188,6 +188,40 @@ body {
   background-clip: text;
 }
 
+/* ─── Theme-aware surface helpers (replaces hardcoded slate-* in components) ─ */
+.surface-panel {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+}
+
+.surface-input {
+  background: var(--surface-inner);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  border-radius: 0.5rem;
+}
+
+.surface-input:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.surface-input::placeholder {
+  color: var(--subtle);
+}
+
+.surface-overlay {
+  background: var(--nav-bg-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 1.25rem;
+}
+
+.text-theme-primary   { color: var(--ink); }
+.text-theme-secondary { color: var(--ink-2); }
+.text-theme-muted     { color: var(--muted); }
+.text-theme-subtle    { color: var(--subtle); }
+
 /* ─── Status badge colours ───────────────────────────────────────────────── */
 .status-confirmed { background: var(--success-bg); border-color: rgba(111,207,151,0.30); color: var(--success); }
 .status-pending   { background: var(--warning-bg); border-color: rgba(242,153,74,0.30);  color: var(--warning); }

@@ -245,10 +245,10 @@ export function SwapPanel() {
     <section className="glass-card p-5 sm:p-6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.22em] text-slate-400">{t('swapPanelEyebrow')}</p>
-          <h3 className="mt-1 text-2xl font-bold text-white">{t('swapPanelTitle')}</h3>
+          <p className="text-xs uppercase tracking-[0.22em]" style={{ color: 'var(--muted)' }}>{t('swapPanelEyebrow')}</p>
+          <h3 className="mt-1 text-2xl font-bold" style={{ color: 'var(--ink)' }}>{t('swapPanelTitle')}</h3>
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-300">
+        <div className="flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink-2)' }}>
           <Wallet className="h-3.5 w-3.5 text-emerald-400" />
           <span>{isConnected ? t('walletConnected') : t('walletDisconnected')}</span>
         </div>
@@ -256,28 +256,25 @@ export function SwapPanel() {
 
       {notice ? (
         <div
-          className={`mb-4 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-            notice.type === 'success'
-              ? 'border-emerald-800 bg-emerald-950/40 text-emerald-200'
-              : 'border-rose-800 bg-rose-950/40 text-rose-200'
-          }`}
+          className="mb-4 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"
+          style={{
+            borderColor: notice.type === 'success' ? 'rgba(111,207,151,0.30)' : 'rgba(235,87,87,0.30)',
+            background: notice.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)',
+            color: notice.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          }}
         >
-          {notice.type === 'success' ? (
-            <CheckCircle2 className="h-4 w-4" />
-          ) : (
-            <TriangleAlert className="h-4 w-4" />
-          )}
+          {notice.type === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}
           <span>{notice.text}</span>
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 shadow-2xl shadow-slate-950/40">
+      <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)' }}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-200">{t('swapFormTitle')}</span>
-            <span className="text-[11px] text-slate-400">
+            <span className="text-sm font-semibold" style={{ color: 'var(--ink-2)' }}>{t('swapFormTitle')}</span>
+            <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
               {isConnected ? t('externalWalletSource') : t('noWalletSource')}{' '}
-              {address ? <span className="font-mono text-slate-200">{address.slice(0, 6)}…{address.slice(-4)}</span> : null}
+              {address ? <span className="font-mono" style={{ color: 'var(--ink-2)' }}>{address.slice(0, 6)}…{address.slice(-4)}</span> : null}
             </span>
           </div>
 
@@ -288,20 +285,24 @@ export function SwapPanel() {
               aria-expanded={settingsOpen}
               aria-haspopup="dialog"
               onClick={() => setSettingsOpen((open) => !open)}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+              className="flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+              style={{ color: 'var(--muted)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--ink)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = 'var(--muted)'; }}
             >
               <Settings2 className="h-4 w-4" />
             </button>
             {settingsOpen ? (
-              <div className="absolute right-0 top-11 z-20 w-72 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-xl shadow-slate-950/60">
+              <div className="absolute right-0 top-11 z-20 w-72 rounded-xl border p-4 shadow-xl" style={{ borderColor: 'var(--border-strong)', background: 'var(--nav-bg-solid)' }}>
                 <div className="space-y-2">
-                  <label className="block text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                  <label className="block text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--muted)' }}>
                     {t('maxSlippageSwap')}
                   </label>
                   <select
                     value={String(slippageBps)}
                     onChange={(event) => setSlippageBps(Number(event.target.value))}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-100 outline-none transition focus:border-blue-500"
+                    className="surface-input w-full px-3 py-2 text-sm font-medium"
+                    style={{ colorScheme: 'inherit' }}
                   >
                     {SLIPPAGE_PRESETS_BPS.map((bps) => (
                       <option key={bps} value={String(bps)}>
@@ -312,7 +313,7 @@ export function SwapPanel() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  <label className="block text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                  <label className="block text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--muted)' }}>
                     {t('minOutput')} ({to})
                   </label>
                   <input
@@ -323,7 +324,7 @@ export function SwapPanel() {
                       setMinOutTouched(true);
                     }}
                     placeholder={t('floorPricePlaceholder')}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-blue-500"
+                    className="surface-input w-full px-3 py-2 text-sm"
                   />
                 </div>
               </div>
@@ -331,12 +332,15 @@ export function SwapPanel() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+        <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)' }}>
           <div className="mb-3 flex items-center justify-between">
-            <span className="text-sm text-slate-400">{t('sell')}</span>
+            <span className="text-sm" style={{ color: 'var(--muted)' }}>{t('sell')}</span>
             <button
               type="button"
-              className="text-xs text-slate-300 underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className="text-xs underline-offset-4 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ color: 'var(--ink-2)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--ink)'; (e.currentTarget as HTMLButtonElement).style.textDecoration = 'underline'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--ink-2)'; (e.currentTarget as HTMLButtonElement).style.textDecoration = ''; }}
               disabled={Number(balanceFor(from)) === 0}
               onClick={() => setAmountIn(String(balanceFor(from)))}
             >
@@ -357,22 +361,24 @@ export function SwapPanel() {
                 setAmountIn(capped);
                 setMinOutTouched(false);
               }}
-              className="min-w-0 flex-1 bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-slate-500 disabled:cursor-not-allowed"
+              className="min-w-0 flex-1 bg-transparent text-3xl font-semibold outline-none disabled:cursor-not-allowed"
+              style={{ color: 'var(--ink)' }}
             />
 
             <select
               value={from}
               onChange={(event) => setFrom(event.target.value as FxToken)}
-              className="h-10 shrink-0 rounded-full border border-slate-700 bg-slate-950 px-3 text-sm font-medium text-slate-100 outline-none transition focus:border-blue-500"
+              className="surface-input h-10 shrink-0 rounded-full px-3 text-sm font-medium"
+              style={{ colorScheme: 'inherit' }}
             >
               <option value="USDC">USDC</option>
               <option value="EURC">EURC</option>
             </select>
           </div>
 
-          <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
+          <div className="mt-3 flex items-center justify-between text-xs" style={{ color: 'var(--muted)' }}>
             <span className="tabular-nums">{t('swapBalance')}: {formatAmount(balanceFor(from))}</span>
-            {insufficient ? <span className="text-rose-300">{t('insufficientBalance')}</span> : null}
+            {insufficient ? <span style={{ color: 'var(--danger)' }}>{t('insufficientBalance')}</span> : null}
           </div>
         </div>
 
@@ -380,57 +386,60 @@ export function SwapPanel() {
           <button
             type="button"
             onClick={flipTokens}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-950 ring-[5px] ring-slate-950 transition-colors hover:bg-slate-800"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border transition-colors"
+            style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-muted)', color: 'var(--ink-2)', boxShadow: '0 0 0 5px var(--bg)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface-strong)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface-muted)'; }}
           >
             <ArrowDown
-              className="h-4 w-4 text-slate-200"
+              className="h-4 w-4"
               style={flipping ? { animation: 'flip-cw 380ms cubic-bezier(0.4, 0, 0.2, 1)' } : undefined}
             />
           </button>
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-          <span className="text-sm text-slate-400">{t('buy')}</span>
+        <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)' }}>
+          <span className="text-sm" style={{ color: 'var(--muted)' }}>{t('buy')}</span>
           <div className="mt-3 flex items-center gap-3">
-            <span className="min-w-0 flex-1 truncate text-3xl font-semibold text-slate-200 tabular-nums">
+            <span className="min-w-0 flex-1 truncate text-3xl font-semibold tabular-nums" style={{ color: 'var(--ink-2)' }}>
               {estimatedOut}
             </span>
-            <div className="flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-slate-700 bg-slate-950 px-3 text-sm font-medium text-slate-100">
+            <div className="flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm font-medium" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink)' }}>
               {to}
             </div>
           </div>
-          <div className="mt-3 text-xs text-slate-400 tabular-nums">{t('swapBalance')}: {formatAmount(balanceFor(to))}</div>
+          <div className="mt-3 text-xs tabular-nums" style={{ color: 'var(--muted)' }}>{t('swapBalance')}: {formatAmount(balanceFor(to))}</div>
         </div>
 
         {quote?.ok ? (
-          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300">
+          <div className="mt-3 rounded-xl border px-4 py-3 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}>
             <div className="flex items-center justify-between">
               <span>{t('rate')}</span>
-              <span className="tabular-nums text-slate-100">
+              <span className="tabular-nums" style={{ color: 'var(--ink)' }}>
                 1 {from} ≈ {Number(quote.effectiveRate).toFixed(6)} {to}
               </span>
             </div>
             <div className="mt-2 flex items-center justify-between">
               <span>{t('appFee')}</span>
-              <span className="tabular-nums text-slate-100">
+              <span className="tabular-nums" style={{ color: 'var(--ink)' }}>
                 {formatAmount(quote.appFeeAmount)} {from} ({bpsToPercent(quote.appFeeBps)}%)
               </span>
             </div>
             <div className="mt-2 flex items-center justify-between">
               <span>{t('slippage')}</span>
-              <span className="text-slate-100">{bpsToPercent(slippageBps)}%</span>
+              <span style={{ color: 'var(--ink)' }}>{bpsToPercent(slippageBps)}%</span>
             </div>
           </div>
         ) : null}
 
         {!quote?.ok && quote?.error ? (
-          <div className="mt-3 rounded-xl border border-rose-800 bg-rose-950/30 px-3 py-2 text-xs text-rose-200">
+          <div className="mt-3 rounded-xl border px-3 py-2 text-xs" style={{ borderColor: 'rgba(235,87,87,0.30)', background: 'var(--danger-bg)', color: 'var(--danger)' }}>
             {quote.error}
           </div>
         ) : null}
 
         {!isConnected ? (
-          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-300">
+          <div className="mt-3 rounded-xl border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}>
             {t('connectWalletBeforeSwapping')}
           </div>
         ) : null}
@@ -456,35 +465,35 @@ export function SwapPanel() {
       </div>
 
       {confirmationOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl shadow-slate-950/80">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.65)' }}>
+          <div className="w-full max-w-md rounded-2xl border p-5 shadow-2xl" style={{ borderColor: 'var(--border-strong)', background: 'var(--nav-bg-solid)' }}>
             <div className="mb-4">
-              <h4 className="text-xl font-bold text-white">{t('confirmSwap')}</h4>
-              <p className="mt-1 text-sm text-slate-400">{t('reviewQuoteFinal')}</p>
+              <h4 className="text-xl font-bold" style={{ color: 'var(--ink)' }}>{t('confirmSwap')}</h4>
+              <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>{t('reviewQuoteFinal')}</p>
             </div>
 
-            <dl className="space-y-2 text-sm text-slate-300">
+            <dl className="space-y-2 text-sm" style={{ color: 'var(--ink-2)' }}>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">{t('pay')}</dt>
-                <dd className="tabular-nums text-slate-100">{formatAmount(amountIn || '0')} {from}</dd>
+                <dt style={{ color: 'var(--muted)' }}>{t('pay')}</dt>
+                <dd className="tabular-nums" style={{ color: 'var(--ink)' }}>{formatAmount(amountIn || '0')} {from}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">{t('receiveEstimated')}</dt>
-                <dd className="tabular-nums text-slate-100">{quote?.ok ? `${formatAmount(quote.amountOut)} ${to}` : '-'}</dd>
+                <dt style={{ color: 'var(--muted)' }}>{t('receiveEstimated')}</dt>
+                <dd className="tabular-nums" style={{ color: 'var(--ink)' }}>{quote?.ok ? `${formatAmount(quote.amountOut)} ${to}` : '-'}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">{t('minOutput')}</dt>
-                <dd className="tabular-nums text-slate-100">
+                <dt style={{ color: 'var(--muted)' }}>{t('minOutput')}</dt>
+                <dd className="tabular-nums" style={{ color: 'var(--ink)' }}>
                   {isPositiveDecimal(minOut) ? `${formatAmount(minOut)} ${to}` : '-' }
                 </dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">{t('slippage')}</dt>
-                <dd className="text-slate-100">{bpsToPercent(slippageBps)}%</dd>
+                <dt style={{ color: 'var(--muted)' }}>{t('slippage')}</dt>
+                <dd style={{ color: 'var(--ink)' }}>{bpsToPercent(slippageBps)}%</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">{t('appFee')}</dt>
-                <dd className="tabular-nums text-slate-100">
+                <dt style={{ color: 'var(--muted)' }}>{t('appFee')}</dt>
+                <dd className="tabular-nums" style={{ color: 'var(--ink)' }}>
                   {quote?.ok
                     ? `${formatAmount(quote.appFeeAmount)} ${from} (${bpsToPercent(quote.appFeeBps)}%)`
                     : '-'}
@@ -497,7 +506,8 @@ export function SwapPanel() {
                 type="button"
                 onClick={() => setConfirmationOpen(false)}
                 disabled={executing}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-800 disabled:opacity-50"
+                className="rounded-lg border px-4 py-2 text-sm font-medium transition disabled:opacity-50"
+                style={{ borderColor: 'var(--border)', background: 'var(--surface-inner)', color: 'var(--ink-2)' }}
               >
                 {t('cancel')}
               </button>
