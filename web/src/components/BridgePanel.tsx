@@ -155,7 +155,7 @@ export function BridgePanel() {
                 if (c.id === toChain.id) setToChain(BRIDGE_CHAINS.find(x => x.id !== c.id)!);
               }}
               className="w-full rounded-xl px-3 py-2.5 text-sm text-ink outline-none transition focus:ring-1"
-              style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+              style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit', colorScheme: 'inherit' }}
             >
               {fromChains.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
@@ -173,7 +173,7 @@ export function BridgePanel() {
                 if (c.id === fromChain.id) setFromChain(BRIDGE_CHAINS.find(x => x.id !== c.id)!);
               }}
               className="w-full rounded-xl px-3 py-2.5 text-sm text-ink outline-none transition"
-              style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+              style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit', colorScheme: 'inherit' }}
             >
               {toChains.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>

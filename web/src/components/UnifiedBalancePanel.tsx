@@ -217,7 +217,7 @@ export function UnifiedBalancePanel() {
                     value={srcChain.id}
                     onChange={e => setSrcChain(SOURCE_CHAINS.find(c => c.id === Number(e.target.value))!)}
                     className="w-full rounded-xl px-3.5 py-2.5 text-sm text-ink outline-none"
-                    style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+                    style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit', colorScheme: 'inherit' }}
                   >
                     {SOURCE_CHAINS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>
@@ -256,7 +256,7 @@ export function UnifiedBalancePanel() {
                     value={spendSrc.id}
                     onChange={e => setSpendSrc(SOURCE_CHAINS.find(c => c.id === Number(e.target.value))!)}
                     className="w-full rounded-xl px-3.5 py-2.5 text-sm text-ink outline-none"
-                    style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+                    style={{ background: 'var(--surface-inner)', border: '1px solid var(--border)', fontFamily: 'inherit', colorScheme: 'inherit' }}
                   >
                     {SOURCE_CHAINS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>

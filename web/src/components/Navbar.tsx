@@ -181,7 +181,7 @@ export const Navbar: React.FC = () => {
               color: 'var(--ink)',
               borderColor: 'var(--border)',
               WebkitTextFillColor: 'var(--ink)',
-              colorScheme: 'dark',
+              colorScheme: 'inherit',
             }}
           >
             <option value="en" style={{ background: 'var(--surface-muted)', color: 'var(--ink)' }}>EN</option>

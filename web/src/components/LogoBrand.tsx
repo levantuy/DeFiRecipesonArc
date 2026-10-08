@@ -116,7 +116,7 @@ export const LogoBrand: React.FC<LogoBrandProps> = ({
 }) => {
   const { icon, text, gap } = SIZES[size];
 
-  const textColor = mono ? 'text-current' : 'text-[#f0f6ff]';
+  const textColor = mono ? 'text-current' : 'text-ink';
 
   if (variant === 'mark') {
     return (

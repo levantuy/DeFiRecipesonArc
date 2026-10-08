@@ -518,7 +518,7 @@ const PortfolioTrackerContent: React.FC = () => {
             <select id="audit-status-filter" value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
               className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
-              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'dark' }}>
+              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'inherit' }}>
               <option value="ALL">All</option>
               <option value="CONFIRMED">Confirmed</option>
               <option value="SUBMITTED">Submitted</option>
@@ -534,7 +534,7 @@ const PortfolioTrackerContent: React.FC = () => {
             <select id="audit-sort-mode" value={sortMode}
               onChange={(event) => setSortMode(event.target.value as SortMode)}
               className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
-              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'dark' }}>
+              style={{ borderColor: 'var(--border)', background: 'var(--surface-muted)', color: 'var(--ink)', colorScheme: 'inherit' }}>
               <option value="NEWEST">{t('newest')}</option>
               <option value="OLDEST">{t('oldest')}</option>
               <option value="STATUS">{t('statusPriority')}</option>
