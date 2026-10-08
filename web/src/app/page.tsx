@@ -17,6 +17,7 @@ import {
   parseDcaActivationConfig,
 } from '@/lib/dcaConfig';
 import { ShieldCheck, Sparkles, Cpu } from 'lucide-react';
+import { LogoBrand } from '@/components/LogoBrand';
 import { parseUnits } from 'viem';
 import { parseUsdcAmountToBaseUnits } from '@/lib/dcaConfig';
 import { parseIntervalHours } from '@/lib/intervalConfig';
@@ -1311,6 +1312,11 @@ export default function Home() {
           <div className="absolute -left-10 -top-10 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
           <div className="relative z-10 space-y-4 max-w-3xl">
+            {/* Hero logo mark — large, prominent */}
+            <div className="mb-2">
+              <LogoBrand variant="mark" size="xl" />
+            </div>
+
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-950/80 border border-blue-800 text-blue-400 text-xs font-semibold">
               <Sparkles className="h-3.5 w-3.5" />
               <span>{t('heroBadge')}</span>
@@ -1534,7 +1540,10 @@ export default function Home() {
       />
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-[#081827]/95 px-4 py-2 text-sm text-[#dfeaf8] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:px-5">
-        <span className="text-[#edf4ff]">© 2026 Defi Recipes. All rights reserved.</span>
+        <span className="flex items-center gap-2 text-[#edf4ff]">
+          <LogoBrand variant="compact" size="sm" />
+          <span className="text-[#8fa3bf] text-xs">© 2026</span>
+        </span>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="rounded-full border border-[#b3c7e2]/35 bg-[#12263d] px-2 py-0.5 text-xs font-semibold text-[#f4f8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">{APP_VERSION}</span>
           {footerLinks.map((link) => (

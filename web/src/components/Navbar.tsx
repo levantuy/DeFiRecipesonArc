@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ArrowUpRight, ChevronDown, Menu, Repeat2, X, Zap } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, Menu, Repeat2, X } from 'lucide-react';
 import { useChainId } from 'wagmi';
+import { LogoBrand } from '@/components/LogoBrand';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 
@@ -80,11 +81,15 @@ export const Navbar: React.FC = () => {
       <div className="flex items-center justify-between px-4 py-3 sm:px-6 max-w-7xl mx-auto">
 
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-500 to-emerald-400 shadow-glow-sm">
-            <Zap className="h-4.5 w-4.5 text-white" />
-          </div>
-          <span className="display font-semibold text-sm text-ink hidden sm:block tracking-tight">DeFi Recipes on Arc</span>
+        <Link href="/" className="flex items-center shrink-0 hover:opacity-90 transition-opacity">
+          {/* Mobile: mark only */}
+          <span className="sm:hidden">
+            <LogoBrand variant="mark" size="sm" />
+          </span>
+          {/* sm+: full wordmark */}
+          <span className="hidden sm:inline-flex">
+            <LogoBrand variant="primary" size="sm" />
+          </span>
         </Link>
 
         {/* Desktop nav */}

@@ -24,11 +24,16 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'DeFi Recipes on Arc - Automated Non-Custodial Yield Workflows',
-  description: 'Trusted, secure, and automated DeFi workflow recipes built specifically for Arc Network with native USDC gas.',
+  title: 'DeFi Recipes on Arc — Automated Non-Custodial Yield Workflows',
+  description: 'Automated DeFi workflow recipes on Arc Network. USDC auto-compounding, recurring DCA, and more — keyless, non-custodial, powered by session key delegation.',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.svg',  type: 'image/svg+xml' },
+      { url: '/favicon.ico',  sizes: '48x48' },
+    ],
+    apple: '/apple-touch-icon.svg',
   },
+  themeColor: '#0d1b2f',
 };
 
 export default async function RootLayout({
