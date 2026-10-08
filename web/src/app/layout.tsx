@@ -45,14 +45,33 @@ export default async function RootLayout({
   const locale = (await cookies()).get('NEXT_LOCALE')?.value === 'vi' ? 'vi' : 'en';
 
   return (
-    <html lang={locale} className={`dark ${dmSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`} data-theme="dark">
+    <html
+      lang={locale}
+      className={`${dmSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
-        {/* Anti-flash: apply saved theme before first paint */}
+        {/* Anti-flash: read saved theme and apply BEFORE first paint.
+            suppressHydrationWarning on <html> prevents React from overwriting
+            the data-theme / class that this script sets on the server SSR default. */}
         <Script id="theme-init" strategy="beforeInteractive">{`
-(function(){try{var t=localStorage.getItem('defi-recipes-theme');var r=document.documentElement;if(t==='light'){r.setAttribute('data-theme','light');r.classList.remove('dark');}else if(t==='dark'||!t){r.setAttribute('data-theme','dark');r.classList.add('dark');}else{var preferLight=window.matchMedia('(prefers-color-scheme: light)').matches;r.setAttribute('data-theme',preferLight?'light':'dark');if(!preferLight)r.classList.add('dark');else r.classList.remove('dark');}}catch(e){}})();
+(function(){
+  try {
+    var t = localStorage.getItem('defi-recipes-theme');
+    var r = document.documentElement;
+    var isLight = t === 'light' || (!t && window.matchMedia('(prefers-color-scheme: light)').matches);
+    if (isLight) {
+      r.setAttribute('data-theme', 'light');
+      r.classList.remove('dark');
+    } else {
+      r.setAttribute('data-theme', 'dark');
+      r.classList.add('dark');
+    }
+  } catch(e) {}
+})();
         `}</Script>
       </head>
-      <body className="antialiased bg-background text-foreground min-h-screen">
+      <body className="antialiased min-h-screen" style={{ background: 'var(--bg)', color: 'var(--ink)' }} suppressHydrationWarning>
         <Providers initialLang={locale}>{children}</Providers>
         <Analytics />
       </body>
