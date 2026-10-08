@@ -131,6 +131,25 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ─── Native select / option — theme-aware ───────────────────────────────── */
+/* color-scheme on html propagates to all native controls automatically.
+   We also need explicit background/color on <option> because browsers
+   paint the dropdown popup using the OS widget, not CSS background. */
+html[data-theme="dark"]  { color-scheme: dark;  }
+html[data-theme="light"] { color-scheme: light; }
+
+select {
+  color-scheme: inherit;
+  background: var(--surface-inner);
+  color: var(--ink);
+  border-color: var(--border);
+}
+
+select option {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
 .nav-lang-select {
   color-scheme: inherit;
 }
