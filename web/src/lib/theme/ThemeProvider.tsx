@@ -22,63 +22,74 @@ export function useTheme() {
   return useContext(ThemeContext);
 }
 
-function getInitialTheme(): Theme {
-  // On SSR, always return dark (matches the anti-flash script default)
-  if (typeof window === 'undefined') return 'dark';
-  // Read what the anti-flash script already applied to <html>
-  const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-  if (stored === 'light' || stored === 'dark') return stored;
+/**
+ * Read theme from the DOM — the inline <script> in <head> already applied
+ * data-theme to <html> before React mounted, so we trust the DOM as source
+ * of truth instead of re-reading localStorage (avoids double-apply).
+ */
+function getThemeFromDOM(): Theme {
+  if (typeof window === 'undefined') return 'dark'; // SSR
+  const attr = document.documentElement.getAttribute('data-theme');
+  if (attr === 'light') return 'light';
+  if (attr === 'dark') return 'dark';
+  // Fallback: read localStorage directly
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored === 'light') return 'light';
+  if (stored === 'dark') return 'dark';
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+function applyThemeToDom(t: Theme) {
+  const root = document.documentElement;
+  root.setAttribute('data-theme', t);
+  if (t === 'dark') {
+    root.classList.add('dark');
+  } else {
+    root.classList.remove('dark');
+  }
+  localStorage.setItem(STORAGE_KEY, t);
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (meta) meta.content = t === 'dark' ? '#0d1b2f' : '#f0f5fc';
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+  // Initialize from DOM (already set by inline script) — no SSR mismatch
+  // because suppressHydrationWarning on <html> allows the DOM state to differ
+  // from the server-rendered string.
+  const [theme, setThemeState] = useState<Theme>('dark');
 
-  const applyTheme = useCallback((t: Theme) => {
-    const root = document.documentElement;
-    root.setAttribute('data-theme', t);
-    // Also keep the Tailwind `dark` class in sync for any tw:dark: utilities
-    if (t === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    localStorage.setItem(STORAGE_KEY, t);
-    // Update meta theme-color
-    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (meta) meta.content = t === 'dark' ? '#0d1b2f' : '#f0f5fc';
-  }, []);
-
-  const setTheme = useCallback((t: Theme) => {
-    setThemeState(t);
-    applyTheme(t);
-  }, [applyTheme]);
-
-  const toggleTheme = useCallback(() => {
-    setThemeState(prev => {
-      const next: Theme = prev === 'dark' ? 'light' : 'dark';
-      applyTheme(next);
-      return next;
-    });
-  }, [applyTheme]);
-
-  // Sync on first mount (handles SSR mismatch gracefully)
+  // On first client mount, sync React state to whatever the DOM already shows.
+  // This is the ONE place we read the DOM; we do NOT call applyThemeToDom here
+  // (that would be redundant — the script already applied the correct theme).
   useEffect(() => {
-    const t = getInitialTheme();
-    setThemeState(t);
-    applyTheme(t);
-    // Also listen for OS preference changes when no user pref is saved
+    const current = getThemeFromDOM();
+    setThemeState(current);
+
+    // Listen for OS preference changes (only when no user override is saved)
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     function onMqChange(e: MediaQueryListEvent) {
       if (!localStorage.getItem(STORAGE_KEY)) {
         const next: Theme = e.matches ? 'light' : 'dark';
+        applyThemeToDom(next);
         setThemeState(next);
-        applyTheme(next);
       }
     }
     mq.addEventListener('change', onMqChange);
     return () => mq.removeEventListener('change', onMqChange);
-  }, [applyTheme]);
+  }, []); // empty deps — run once on mount only
+
+  const setTheme = useCallback((t: Theme) => {
+    applyThemeToDom(t);
+    setThemeState(t);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setThemeState(prev => {
+      const next: Theme = prev === 'dark' ? 'light' : 'dark';
+      applyThemeToDom(next);
+      return next;
+    });
+  }, []);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>

@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { DM_Sans, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
-import Script from 'next/script';
 import './globals.css';
 import { Providers } from './providers';
 import { Analytics } from "@vercel/analytics/next"
@@ -29,13 +28,24 @@ export const metadata: Metadata = {
   description: 'Automated DeFi workflow recipes on Arc Network. USDC auto-compounding, recurring DCA, and more — keyless, non-custodial, powered by session key delegation.',
   icons: {
     icon: [
-      { url: '/favicon.svg',  type: 'image/svg+xml' },
-      { url: '/favicon.ico',  sizes: '48x48' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: '48x48' },
     ],
     apple: '/apple-touch-icon.svg',
   },
-  themeColor: '#0d1b2f',
 };
+
+// Inline script string — runs synchronously before any CSS paint.
+// Next.js 15 App Router: <Script strategy="beforeInteractive"> does NOT
+// guarantee execution before hydration. Only a raw inline <script> in <head>
+// is truly synchronous. dangerouslySetInnerHTML is the correct approach here.
+const themeScript = `(function(){try{
+  var s=localStorage.getItem('defi-recipes-theme');
+  var r=document.documentElement;
+  var light=s==='light'||(s===null&&window.matchMedia('(prefers-color-scheme:light)').matches);
+  if(light){r.setAttribute('data-theme','light');r.classList.remove('dark');}
+  else{r.setAttribute('data-theme','dark');r.classList.add('dark');}
+}catch(e){}})();`;
 
 export default async function RootLayout({
   children,
@@ -51,27 +61,14 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        {/* Anti-flash: read saved theme and apply BEFORE first paint.
-            suppressHydrationWarning on <html> prevents React from overwriting
-            the data-theme / class that this script sets on the server SSR default. */}
-        <Script id="theme-init" strategy="beforeInteractive">{`
-(function(){
-  try {
-    var t = localStorage.getItem('defi-recipes-theme');
-    var r = document.documentElement;
-    var isLight = t === 'light' || (!t && window.matchMedia('(prefers-color-scheme: light)').matches);
-    if (isLight) {
-      r.setAttribute('data-theme', 'light');
-      r.classList.remove('dark');
-    } else {
-      r.setAttribute('data-theme', 'dark');
-      r.classList.add('dark');
-    }
-  } catch(e) {}
-})();
-        `}</Script>
+        {/* Runs synchronously before CSS paint — sets data-theme from localStorage */}
+        {/* eslint-disable-next-line @next/next/no-before-interactive-script-outside-document */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="antialiased min-h-screen" style={{ background: 'var(--bg)', color: 'var(--ink)' }} suppressHydrationWarning>
+      <body
+        className="antialiased min-h-screen"
+        suppressHydrationWarning
+      >
         <Providers initialLang={locale}>{children}</Providers>
         <Analytics />
       </body>
