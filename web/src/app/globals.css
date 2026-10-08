@@ -3,9 +3,7 @@
 @tailwind utilities;
 
 /* ─── Arc Design Tokens — Dark (default) ─────────────────────────────────── */
-/* :root = fallback when script hasn't run yet (SSR, no-JS).
-   [data-theme="dark"] = explicit dark after script runs.
-   Both produce identical tokens so there is never a flash. */
+/* :root = SSR/no-JS fallback; [data-theme="dark"] = explicit after script runs */
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
