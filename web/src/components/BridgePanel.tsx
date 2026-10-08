@@ -273,7 +273,7 @@ export function BridgePanel() {
             disabled={!canConfirm}
             onClick={() => setConfirmed(true)}
             className="w-full rounded-2xl py-3.5 text-sm font-semibold text-ink transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ background: 'var(--accent)', color: '#0d1b2f' }}
+            style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
           >
             Review Bridge
           </button>
@@ -284,7 +284,7 @@ export function BridgePanel() {
               disabled={bridging}
               onClick={handleBridge}
               className="w-full rounded-2xl py-3.5 text-sm font-semibold transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ background: bridging ? 'var(--surface-strong)' : 'var(--success)', color: '#0d1b2f' }}
+              style={{ background: bridging ? 'var(--surface-strong)' : 'var(--success)', color: 'var(--accent-fg)' }}
             >
               {bridging
                 ? <span className="flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Bridging…</span>

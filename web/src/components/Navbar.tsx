@@ -4,6 +4,7 @@ import Link from 'next/link';
 import React, { useEffect, useRef, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ArrowUpRight, ChevronDown, Menu, Repeat2, X } from 'lucide-react';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useChainId } from 'wagmi';
 import { LogoBrand } from '@/components/LogoBrand';
 import { usePathname } from 'next/navigation';
@@ -77,7 +78,7 @@ export const Navbar: React.FC = () => {
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
   return (
-    <header className="sticky top-0 z-50" style={{ background: 'rgba(13,27,47,0.85)', backdropFilter: 'blur(20px) saturate(160%)', borderBottom: '1px solid var(--border)' }}>
+    <header className="sticky top-0 z-50" style={{ background: 'var(--nav-bg)', backdropFilter: 'blur(20px) saturate(160%)', borderBottom: '1px solid var(--border)' }}>
       <div className="flex items-center justify-between px-4 py-3 sm:px-6 max-w-7xl mx-auto">
 
         {/* Logo */}
@@ -187,6 +188,7 @@ export const Navbar: React.FC = () => {
             <option value="vi" style={{ background: 'var(--surface-muted)', color: 'var(--ink)' }}>VI</option>
           </select>
 
+          <ThemeToggle variant="icon" />
           <ConnectButton showBalance={false} />
         </div>
 
@@ -207,7 +209,7 @@ export const Navbar: React.FC = () => {
 
       {/* Mobile panel */}
       {mobileOpen && (
-        <div className="lg:hidden border-t px-4 py-3 space-y-0.5" style={{ background: 'rgba(13,27,47,0.97)', borderColor: 'var(--border)' }}>
+        <div className="lg:hidden border-t px-4 py-3 space-y-0.5" style={{ background: 'var(--nav-bg-solid)', borderColor: 'var(--border)' }}>
           <Link
             href="/"
             className={`block rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors ${
@@ -258,6 +260,8 @@ export const Navbar: React.FC = () => {
               <span className={`h-1.5 w-1.5 rounded-full ${isArc ? 'bg-success animate-pulse' : 'bg-warning'}`} />
               {isArc ? t('navArcTestnet') : t('navWrongNetwork')}
             </div>
+            <div className="flex items-center gap-2">
+              <ThemeToggle variant="icon" />
             <select
               value={lang}
               onChange={e => setLang(e.target.value as 'en' | 'vi')}
@@ -268,12 +272,13 @@ export const Navbar: React.FC = () => {
                 color: 'var(--ink)',
                 borderColor: 'var(--border)',
                 WebkitTextFillColor: 'var(--ink)',
-                colorScheme: 'dark',
+                colorScheme: 'inherit',
               }}
             >
               <option value="en" style={{ background: 'var(--surface-muted)', color: 'var(--ink)' }}>EN</option>
               <option value="vi" style={{ background: 'var(--surface-muted)', color: 'var(--ink)' }}>VI</option>
             </select>
+            </div>{/* end flex gap-2 */}
           </div>
         </div>
       )}

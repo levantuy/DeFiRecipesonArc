@@ -240,7 +240,7 @@ export function UnifiedBalancePanel() {
                   disabled={!isPositiveDecimal(depositAmt) || depositing}
                   onClick={handleDeposit}
                   className="w-full rounded-2xl py-3.5 text-sm font-semibold transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-                  style={{ background: 'var(--accent)', color: '#0d1b2f' }}
+                  style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
                 >
                   {depositing ? <span className="flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Depositing…</span> : 'Deposit into Unified Balance'}
                 </button>
@@ -301,7 +301,7 @@ export function UnifiedBalancePanel() {
                   disabled={!isPositiveDecimal(spendAmt) || !isAddress(spendTo) || spending}
                   onClick={handleSpend}
                   className="w-full rounded-2xl py-3.5 text-sm font-semibold transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-                  style={{ background: 'var(--success)', color: '#0d1b2f' }}
+                  style={{ background: 'var(--success)', color: 'var(--success-fg)' }}
                 >
                   {spending ? <span className="flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Spending…</span> : 'Spend from Unified Balance'}
                 </button>

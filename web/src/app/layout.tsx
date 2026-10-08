@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { DM_Sans, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
+import Script from 'next/script';
 import './globals.css';
 import { Providers } from './providers';
 import { Analytics } from "@vercel/analytics/next"
@@ -44,7 +45,13 @@ export default async function RootLayout({
   const locale = (await cookies()).get('NEXT_LOCALE')?.value === 'vi' ? 'vi' : 'en';
 
   return (
-    <html lang={locale} className={`dark ${dmSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
+    <html lang={locale} className={`dark ${dmSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`} data-theme="dark">
+      <head>
+        {/* Anti-flash: apply saved theme before first paint */}
+        <Script id="theme-init" strategy="beforeInteractive">{`
+(function(){try{var t=localStorage.getItem('defi-recipes-theme');var r=document.documentElement;if(t==='light'){r.setAttribute('data-theme','light');r.classList.remove('dark');}else if(t==='dark'||!t){r.setAttribute('data-theme','dark');r.classList.add('dark');}else{var preferLight=window.matchMedia('(prefers-color-scheme: light)').matches;r.setAttribute('data-theme',preferLight?'light':'dark');if(!preferLight)r.classList.add('dark');else r.classList.remove('dark');}}catch(e){}})();
+        `}</Script>
+      </head>
       <body className="antialiased bg-background text-foreground min-h-screen">
         <Providers initialLang={locale}>{children}</Providers>
         <Analytics />

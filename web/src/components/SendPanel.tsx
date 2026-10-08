@@ -214,7 +214,7 @@ export function SendPanel() {
             disabled={!canSend || busy}
             onClick={handleSend}
             className="flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-sm font-semibold transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ background: 'var(--accent)', color: '#0d1b2f' }}
+            style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
           >
             {busy
               ? <><Loader2 className="h-4 w-4 animate-spin" />{switching ? 'Switching…' : isConfirming ? 'Confirming…' : 'Sending…'}</>

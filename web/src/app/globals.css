@@ -2,8 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Arc Dark Design Tokens ─────────────────────────────────────────────── */
-:root {
+/* ─── Arc Design Tokens — Dark (default) ─────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
   /* Canvas */
   --bg:              #0d1b2f;
   --bg-gradient:     linear-gradient(180deg, #0d1b2f 0%, #0d1b2f 58%, #122d45 100%);
@@ -29,10 +32,12 @@
   --accent:          #acc6e9;
   --accent-hover:    #ccddf5;
   --accent-rgb:      172, 198, 233;
+  --accent-fg:       #0d1b2f;
 
   /* Semantic */
   --success:         #6fcf97;
   --success-bg:      rgba(111, 207, 151, 0.10);
+  --success-fg:      #0d1b2f;
   --danger:          #eb5757;
   --danger-bg:       rgba(235, 87, 87, 0.10);
   --warning:         #f2994a;
@@ -46,6 +51,66 @@
   --primary:         #acc6e9;
   --border-color:    rgba(255, 255, 255, 0.09);
   --surface-alt:     rgba(255,255,255,0.07);
+
+  /* Nav/modal overlays */
+  --nav-bg:          rgba(13, 27, 47, 0.85);
+  --nav-bg-solid:    rgba(13, 27, 47, 0.97);
+  --modal-bg:        rgba(11, 20, 38, 0.96);
+}
+
+/* ─── Arc Design Tokens — Light ──────────────────────────────────────────── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Canvas */
+  --bg:              #f0f5fc;
+  --bg-gradient:     linear-gradient(180deg, #f0f5fc 0%, #e8f0fb 58%, #ddeaf8 100%);
+
+  /* Surfaces */
+  --surface:         rgba(255, 255, 255, 0.75);
+  --surface-strong:  rgba(255, 255, 255, 0.95);
+  --surface-muted:   #dce8f5;
+  --surface-inner:   rgba(0, 0, 0, 0.03);
+
+  /* Typography */
+  --ink:             #0d1b2f;
+  --ink-2:           #1e3a5f;
+  --muted:           #4a6484;
+  --subtle:          #8099b5;
+
+  /* Borders */
+  --border:          rgba(0, 0, 0, 0.10);
+  --border-strong:   rgba(44, 82, 130, 0.28);
+  --border-focus:    rgba(44, 82, 130, 0.65);
+
+  /* Accent — same brand blue, works on light bg */
+  --accent:          #2c5282;
+  --accent-hover:    #1a3a5c;
+  --accent-rgb:      44, 82, 130;
+  --accent-fg:       #ffffff;
+
+  /* Semantic — slightly darker for contrast on white */
+  --success:         #1a8c4e;
+  --success-bg:      rgba(26, 140, 78, 0.10);
+  --success-fg:      #ffffff;
+  --danger:          #c0392b;
+  --danger-bg:       rgba(192, 57, 43, 0.10);
+  --warning:         #c87020;
+  --warning-bg:      rgba(200, 112, 32, 0.10);
+
+  /* Legacy compat */
+  --background:      #f0f5fc;
+  --foreground:      #0d1b2f;
+  --card:            #ffffff;
+  --cardBorder:      rgba(0, 0, 0, 0.08);
+  --primary:         #2c5282;
+  --border-color:    rgba(0, 0, 0, 0.10);
+  --surface-alt:     rgba(0, 0, 0, 0.04);
+
+  /* Nav/modal overlays */
+  --nav-bg:          rgba(240, 245, 252, 0.88);
+  --nav-bg-solid:    rgba(240, 245, 252, 0.98);
+  --modal-bg:        rgba(248, 251, 255, 0.98);
 }
 
 /* ─── Base ───────────────────────────────────────────────────────────────── */
@@ -66,7 +131,7 @@ body {
 }
 
 .nav-lang-select {
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 .nav-lang-select option {
@@ -109,7 +174,7 @@ body {
 }
 
 .glass-modal {
-  background: rgba(11, 20, 38, 0.96);
+  background: var(--modal-bg);
   backdrop-filter: blur(32px) saturate(180%);
   -webkit-backdrop-filter: blur(32px) saturate(180%);
   border: 1px solid var(--border-strong);

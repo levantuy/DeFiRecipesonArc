@@ -160,7 +160,7 @@ export const RecipeCatalog: React.FC<RecipeCatalogProps> = ({ onSelectRecipe }) 
                     type="button"
                     onClick={() => onSelectRecipe(recipe)}
                     className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold text-ink transition-all hover:scale-[1.03] active:scale-[0.98]"
-                    style={{ background: 'var(--accent)', color: '#0d1b2f' }}
+                    style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
                   >
                     {t('simulateActivate')}
                     <ArrowRight className="h-3.5 w-3.5" />
