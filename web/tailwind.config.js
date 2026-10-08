@@ -14,45 +14,75 @@ module.exports = {
         mono:    ['var(--font-jetbrains-mono)', '"JetBrains Mono"', 'Menlo', 'monospace'],
       },
       colors: {
+        /* All colors reference CSS variables so they respond to data-theme switches.
+           Tailwind needs the withOpacity helper pattern: use CSS-var-based values
+           wrapped in rgb() with <alpha-value> so opacity modifiers (bg-X/50) work. */
+
         /* Canvas */
-        background:  '#0d1b2f',
-        surface:     'rgba(255,255,255,0.065)',
-        'surface-strong': 'rgba(255,255,255,0.10)',
-        'surface-muted':  '#162236',
-        'surface-alt':    'rgba(255,255,255,0.07)',
+        background:  'var(--bg)',
+        foreground:  'var(--ink)',
 
-        /* Brand */
-        card:        '#111d30',
-        cardBorder:  'rgba(255,255,255,0.09)',
+        /* Surfaces */
+        surface:           'var(--surface)',
+        'surface-strong':  'var(--surface-strong)',
+        'surface-muted':   'var(--surface-muted)',
+        'surface-inner':   'var(--surface-inner)',
+        'surface-alt':     'var(--surface-alt)',
 
-        /* Text */
-        ink:    '#f0f6ff',
-        'ink-2':'#c8daf0',
-        muted:  '#8fa3bf',
-        subtle: '#5c738a',
+        /* Cards */
+        card:        'var(--card)',
+        cardBorder:  'var(--cardBorder)',
+
+        /* Typography */
+        ink:    'var(--ink)',
+        'ink-2':'var(--ink-2)',
+        muted:  'var(--muted)',
+        subtle: 'var(--subtle)',
+
+        /* Borders */
+        border:          'var(--border)',
+        'border-strong': 'var(--border-strong)',
+        'border-focus':  'var(--border-focus)',
+
+        /* Brand / Accent */
+        primary: {
+          DEFAULT: 'var(--accent)',
+          hover:   'var(--accent-hover)',
+          fg:      'var(--accent-fg)',
+        },
+        accent: {
+          DEFAULT: 'var(--accent)',
+          hover:   'var(--accent-hover)',
+          fg:      'var(--accent-fg)',
+        },
 
         /* Semantic */
-        border:  'rgba(255,255,255,0.09)',
-        'border-strong': 'rgba(172,198,233,0.30)',
-
-        primary:       { DEFAULT: '#acc6e9', hover: '#ccddf5' },
-        accent:        { DEFAULT: '#acc6e9', hover: '#ccddf5' },
-        success:       { DEFAULT: '#6fcf97', bg: 'rgba(111,207,151,0.10)' },
-        danger:        { DEFAULT: '#eb5757', bg: 'rgba(235,87,87,0.10)' },
-        warning:       { DEFAULT: '#f2994a', bg: 'rgba(242,153,74,0.10)' },
+        success: {
+          DEFAULT: 'var(--success)',
+          bg:      'var(--success-bg)',
+          fg:      'var(--success-fg)',
+        },
+        danger: {
+          DEFAULT: 'var(--danger)',
+          bg:      'var(--danger-bg)',
+        },
+        warning: {
+          DEFAULT: 'var(--warning)',
+          bg:      'var(--warning-bg)',
+        },
       },
       borderRadius: {
         '4xl': '2rem',
       },
       boxShadow: {
-        glow:       '0 0 24px rgba(172,198,233,0.15)',
-        'glow-sm':  '0 0 12px rgba(172,198,233,0.10)',
+        glow:           '0 0 24px rgba(var(--accent-rgb),0.15)',
+        'glow-sm':      '0 0 12px rgba(var(--accent-rgb),0.10)',
         'glow-success': '0 0 20px rgba(111,207,151,0.18)',
-        card:       '0 4px 24px rgba(0,0,0,0.35)',
-        'card-lg':  '0 8px 48px rgba(0,0,0,0.50)',
+        card:           '0 4px 24px rgba(0,0,0,0.35)',
+        'card-lg':      '0 8px 48px rgba(0,0,0,0.50)',
       },
       backgroundImage: {
-        'canvas-gradient': 'linear-gradient(180deg, #0d1b2f 0%, #0d1b2f 58%, #122d45 100%)',
+        'canvas-gradient': 'var(--bg-gradient)',
       },
     },
   },

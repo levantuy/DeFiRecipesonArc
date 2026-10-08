@@ -1301,7 +1301,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
       <Navbar />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 space-y-10">
@@ -1311,7 +1311,7 @@ export default function Home() {
           <div className="absolute -left-10 -top-10 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
           <div className="relative z-10 space-y-4 max-w-3xl">
-            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-950/80 border border-blue-800 text-blue-400 text-xs font-semibold">
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold" style={{ background: 'var(--surface-muted)', border: '1px solid var(--border-strong)', color: 'var(--accent)' }}>
               <Sparkles className="h-3.5 w-3.5" />
               <span>{t('heroBadge')}</span>
             </div>
