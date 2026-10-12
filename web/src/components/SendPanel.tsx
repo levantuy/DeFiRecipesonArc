@@ -6,6 +6,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useBalance, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, isAddress } from 'viem';
 import { CONTRACT_ADDRESSES, ARC_TESTNET_CHAIN_ID } from '@/config/contracts';
+import { friendlyError } from '@/lib/friendlyError';
 
 const USDC_TRANSFER_ABI = [
   {
@@ -57,7 +58,7 @@ export function SendPanel() {
   const canSend        = isConnected && recipientValid && amountValid && sufficientBal && !isPending && !isConfirming;
 
   useEffect(() => {
-    if (writeError) setNotice({ type: 'error', text: writeError.message.split('\n')[0] });
+    if (writeError) setNotice({ type: 'error', text: friendlyError(writeError) });
   }, [writeError]);
 
   useEffect(() => {

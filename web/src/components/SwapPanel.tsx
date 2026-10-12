@@ -8,6 +8,7 @@ import { useAccount, useBalance } from 'wagmi';
 import { CONTRACT_ADDRESSES } from '@/config/contracts';
 import { estimateSwap, executeSwap } from '@/lib/appkit/swap-client';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { friendlyError } from '@/lib/friendlyError';
 
 type FxToken = 'USDC' | 'EURC';
 
@@ -136,7 +137,7 @@ export function SwapPanel() {
         if (id !== requestId.current) return;
         setQuote({
           ok: false,
-          error: error instanceof Error ? error.message : t('failedToFetchQuote'),
+          error: friendlyError(error, t('failedToFetchQuote')),
         });
       } finally {
         if (id === requestId.current) {
@@ -232,7 +233,7 @@ export function SwapPanel() {
     } catch (error) {
       setNotice({
         type: 'error',
-        text: error instanceof Error ? error.message : t('swapExecutionFailed'),
+        text: friendlyError(error, t('swapExecutionFailed')),
       });
     } finally {
       setExecuting(false);

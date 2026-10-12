@@ -25,6 +25,7 @@ import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContra
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { FooterLinkIcon } from './layout-icons';
 import { APP_VERSION, footerLinks } from './layout-config';
+import { friendlyError } from '@/lib/friendlyError';
 
 // Cumulative USDC spend quota shared across every recipe for the same userAddress + keeper session key pair.
 
@@ -153,12 +154,9 @@ function isAddress(value: string): value is `0x${string}` {
 
 function getErrorMessage(error: unknown): string {
   if (isRateLimitError(error)) {
-    return 'Arc RPC request limit reached. Please wait 10-20 seconds and retry. If this keeps happening, switch your wallet RPC endpoint between https://rpc.testnet.arc.io and https://rpc.testnet.arc.network.';
+    return 'Arc RPC request limit reached. Please wait 10–20 seconds and retry. If this keeps happening, switch your wallet RPC endpoint between https://rpc.testnet.arc.io and https://rpc.testnet.arc.network.';
   }
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  return 'Unknown error.';
+  return friendlyError(error, 'An unexpected error occurred. Please try again.');
 }
 
 function isRateLimitError(error: unknown): boolean {

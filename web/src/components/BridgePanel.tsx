@@ -7,6 +7,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { createViemAdapterFromProvider } from '@circle-fin/adapter-viem-v2';
 import type { EIP1193Provider } from 'viem';
 import { getAppKit } from '@/lib/appkit/client';
+import { friendlyError } from '@/lib/friendlyError';
 
 const BRIDGE_CHAINS = [
   { id: 5042002,  kit: 'Arc_Testnet',      label: 'Arc Testnet' },
@@ -110,7 +111,7 @@ export function BridgePanel() {
       setRecipient('');
       setConfirmed(false);
     } catch (err) {
-      setNotice({ type: 'error', text: err instanceof Error ? err.message : 'Bridge failed.' });
+      setNotice({ type: 'error', text: friendlyError(err, 'Bridge failed. Please try again.') });
       resetSteps();
     } finally {
       setBridging(false);
