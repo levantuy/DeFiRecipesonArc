@@ -26,6 +26,7 @@ import { useLanguage } from '@/lib/i18n/LanguageProvider';
 import { FooterLinkIcon } from './layout-icons';
 import { APP_VERSION, footerLinks } from './layout-config';
 import { friendlyError } from '@/lib/friendlyError';
+import { useQueryClient } from '@tanstack/react-query';
 
 // Cumulative USDC spend quota shared across every recipe for the same userAddress + keeper session key pair.
 
@@ -222,7 +223,7 @@ function mapBackendStatusToLifecycleStatus(status: string | undefined): RecipeLi
   return 'inactive';
 }
 
-async function syncKeeperRecipe(payload: Record<string, unknown>) {
+async function persistKeeperRecipe(payload: Record<string, unknown>) {
   const response = await fetch('/api/recipes', {
     method: 'POST',
     headers: {
@@ -303,6 +304,15 @@ async function fetchSessionSpendQuota(payload: {
 }
 
 export default function Home() {
+  const queryClient = useQueryClient();
+  const syncKeeperRecipe = async (payload: Record<string, unknown>) => {
+    await persistKeeperRecipe(payload);
+    if (typeof payload.userAddress === 'string') {
+      await queryClient.invalidateQueries({
+        queryKey: ['active-recipe-count', payload.userAddress.toLowerCase()],
+      });
+    }
+  };
   const { lang, t } = useLanguage();
   const locale = lang === 'vi' ? 'vi-VN' : 'en-US';
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeConfig | null>(null);

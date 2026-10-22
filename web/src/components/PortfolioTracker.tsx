@@ -5,10 +5,12 @@ import { Wallet, ArrowUpRight, History, CheckCircle, Clock, AlertTriangle, Exter
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { formatUnits } from 'viem';
 import { useAccount, useBalance } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
 
 import { CONTRACT_ADDRESSES } from '../config/contracts';
 import { formatUsdcDecimal } from '@/lib/dcaConfig';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { fetchActiveRecipeCount } from '@/lib/activeRecipeCount';
 
 interface AuditLog {
   id: string;
@@ -147,6 +149,22 @@ const PortfolioTrackerContent: React.FC = () => {
     [searchParams]
   );
   const { address } = useAccount();
+  const {
+    data: activeRecipeCount,
+    error: activeRecipesError,
+    isPending: isLoadingActiveRecipes,
+  } = useQuery({
+    queryKey: ['active-recipe-count', address?.toLowerCase()],
+    queryFn: ({ signal }) => {
+      if (!address) {
+        throw new Error('Connect a wallet to load active recipes.');
+      }
+      return fetchActiveRecipeCount(address, signal);
+    },
+    enabled: Boolean(address),
+    refetchInterval: 15_000,
+    retry: false,
+  });
   const { data: usdcBalanceData, isLoading: isLoadingUsdcBalance } = useBalance({
     address,
     token: CONTRACT_ADDRESSES.usdc,
@@ -375,11 +393,6 @@ const PortfolioTrackerContent: React.FC = () => {
   const canGoPrevious = page > 1 && !isLoadingLogs;
   const canGoNext = page < totalPages && !isLoadingLogs && (hasMore || page * pageSize < totalCount);
 
-  const activeRecipeCount = useMemo(() => {
-    const activeStatuses: AuditLog['status'][] = ['CONFIRMED', 'SUBMITTED', 'SIMULATING'];
-    return auditLogs.filter((log) => activeStatuses.includes(log.status)).length;
-  }, [auditLogs]);
-
   const totalGasUsedUsdc = useMemo(() => {
     return auditLogs.reduce((sum, log) => sum + parseGasUsedUsdc(log.gasUsedUsdc), 0);
   }, [auditLogs]);
@@ -467,9 +480,15 @@ const PortfolioTrackerContent: React.FC = () => {
             </div>
           </div>
           <div className="display text-3xl font-bold tabular-nums text-ink">
-            {activeRecipeCount} <span className="text-sm font-normal text-muted">{t('recipesRunning')}</span>
+            {address && !activeRecipesError ? activeRecipeCount ?? '--' : '--'} <span className="text-sm font-normal text-muted">{t('recipesRunning')}</span>
           </div>
-          <div className="mt-2 text-xs text-muted">{t('scopedAuthorization')}</div>
+          {activeRecipesError ? (
+            <div className="mt-2 text-xs text-rose-400" role="alert">{activeRecipesError.message}</div>
+          ) : (
+            <div className="mt-2 text-xs text-muted">
+              {!address ? 'Connect a wallet to view active recipes.' : isLoadingActiveRecipes ? 'Loading active recipes...' : t('scopedAuthorization')}
+            </div>
+          )}
         </div>
 
         <div className="glass-card p-5">
