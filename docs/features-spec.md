@@ -385,6 +385,7 @@ graph LR
 
 #### F-5.3: Portfolio Tracker & Audit Log Realtime
 * **Thông số tổng quan:**
+  * **Gas đã dùng trên trang hiện tại:** Chỉ cộng phí gas của các giao dịch thuộc ví đang kết nối trong trang lịch sử đang xem, theo bộ lọc hiện tại; không đại diện cho tổng phí gas của toàn bộ lịch sử giao dịch.
   * **Active Recipes:** Số đăng ký recipe có trạng thái `ACTIVE` và thời hạn ủy quyền `delegationValidUntil` hợp lệ, chưa hết hạn, thuộc ví đang kết nối. Mỗi mã đăng ký chỉ được tính một lần; không phụ thuộc số lần thực thi, bộ lọc hay phân trang lịch sử. Dữ liệu được làm mới mỗi 15 giây và sau khi kích hoạt, tạm dừng, tiếp tục hoặc thu hồi recipe thành công. Recipe thiếu thời hạn hoặc có thời hạn không hợp lệ không được tính. Khi chưa kết nối ví, đang tải hoặc không lấy được dữ liệu thật từ keeper, hiển thị `--` cùng thông báo tương ứng thay vì số 0; không sử dụng dữ liệu dự phòng trong bộ nhớ để tính tổng. Nếu danh sách chạm giới hạn 200 bản ghi của API, hiển thị lỗi thay vì tổng có thể bị thiếu.
   * **Total Value Automated (TVA):** Tổng giá trị USDC đang chạy trong các Recipe.
   * **Total Yield Claimed:** Tổng lợi nhuận USDC đã tự động tích lũy/tái đầu tư.
