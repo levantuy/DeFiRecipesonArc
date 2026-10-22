@@ -1,10 +1,9 @@
 ---
+name: i18n-en-vi
 description: "Xây dựng tính năng chuyển đổi ngôn ngữ English/Tiếng Việt cho web (Next.js App Router) bằng React Context phía client kết hợp cookie lưu lựa chọn"
-name: "i18n-en-vi"
+disable-model-invocation: true
 argument-hint: "Mô tả phạm vi trang/component cần đa ngôn ngữ (để trống = áp dụng toàn bộ web/src)"
-agent: "agent"
 ---
-
 # Xây dựng tính năng đa ngôn ngữ (English / Tiếng Việt) cho website
 
 ## Mục tiêu
