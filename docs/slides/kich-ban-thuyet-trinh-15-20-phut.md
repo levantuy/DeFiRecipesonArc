@@ -41,7 +41,19 @@ Phần **Lời thoại** có thể đọc trực tiếp. Phần **Trình chiếu
 
 **Lời thoại:**
 
-Xin chào mọi người. Hôm nay, tôi muốn giới thiệu DeFi Recipes on Arc, một dự án giúp tự động hóa các thao tác DeFi lặp lại trên Arc.
+Xin chào anh Teddzy, anh Lecter và toàn thể mọi người tham gia event ngày hôm nay.
+
+Mình là Tùy, một nhà phát triển phần mềm và đến nay mình đã có khoảng 15 năm làm việc trong lĩnh vực CNTT.
+
+Mình biết đến Bitcoin từ khá sớm, từ những năm còn học đại học và sau này đi làm vẫn tiếp tục theo dõi. Nhưng phải đến năm 2021, mình mới chính thức bước vào thị trường crypto.
+
+Mình vẫn nhớ cảm giác lần đầu tiên tự thực hiện một giao dịch trên blockchain. Lần đầu mua coin theo một người đồng nghiệp, sáng hôm sau thức dậy thấy tài khoản x3 — thực sự là một cảm giác rất phấn khích. 😄
+
+Nhưng niềm vui đó không kéo dài quá lâu. Kết thúc mùa đầu tiên, mình mất toàn bộ khoản tiền tiết kiệm.
+
+Và cũng chính từ thất bại đó, mình bắt đầu tìm hiểu sâu hơn về crypto, blockchain và DeFi, rồi tìm hiểu thêm về airdrop.
+
+Chính hành trình đó đã đưa mình đến với Arc, và cũng là cơ duyên để hôm nay mình có cơ hội gặp gỡ mọi người và chia sẻ về DeFi Recipes on Arc.
 
 Ý tưởng xuất phát từ một câu hỏi rất thực tế: nếu chúng ta đã biết mình muốn thực hiện một chiến lược đều đặn, tại sao vẫn phải mở ví và làm lại cùng một chuỗi thao tác mỗi lần?
 
